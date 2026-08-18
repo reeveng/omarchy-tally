@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "jmad.tally",
+  "name": "Tally",
+  "version": "1.0.0",
+  "author": "jmad",
+  "description": "A tally light for OBS: dim while it is closed, lit while the stream is live",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "TallyWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Tally",
+    "description": "A record dot that dims while OBS is closed, sits plain while it is open, and lights up while the stream is live",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "intervalMs": 3000,
+      "quiet": true,
+      "stayAwake": true,
+      "announce": true
+    },
+    "schema": [
+      {
+        "key": "intervalMs",
+        "type": "integer",
+        "label": "Poll interval (ms)",
+        "min": 1000,
+        "max": 30000,
+        "step": 500,
+        "description": "How often OBS is asked what it is doing."
+      },
+      {
+        "key": "quiet",
+        "type": "boolean",
+        "label": "Silence notifications while live",
+        "defaultValue": true,
+        "description": "Turn do not disturb on for the length of the stream, and leave it as it was found."
+      },
+      {
+        "key": "stayAwake",
+        "type": "boolean",
+        "label": "Hold the screen awake while live",
+        "defaultValue": true,
+        "description": "Keep the idle lock and the screensaver off for the length of the stream."
+      },
+      {
+        "key": "announce",
+        "type": "boolean",
+        "label": "Say when the stream starts and ends",
+        "defaultValue": true,
+        "description": "A notification as the stream goes live, and another as it ends."
+      }
+    ]
+  }
+}

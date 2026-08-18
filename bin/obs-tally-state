@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# One word for what OBS is doing: live, idle, or closed.
+#
+# OBS writes "==== Streaming Start ====" and "==== Streaming Stop ====" banners
+# into the log of the session it is running, so whichever came last is the
+# answer. Nothing here talks to the websocket, which means no plugin to install
+# in OBS, no port to open and no password to keep.
+#
+# OBS_LOG_DIR moves the directory the logs are read from.
+#
+# A word in $XDG_RUNTIME_DIR/obs-tally-state is taken over anything OBS says,
+# which is how obs-tally-simulate shows the light in all three states without
+# opening OBS. The file lives on a tmpfs, so a reboot forgets it.
+
+set -uo pipefail
+
+SIMULATED="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-state"
+LOGS="${OBS_LOG_DIR:-$HOME/.config/obs-studio/logs}"
+
+if [[ -f $SIMULATED ]]; then
+  read -r word <"$SIMULATED"
+  case "$word" in
+  live | idle | closed)
+    echo "$word"
+    exit 0
+    ;;
+  esac
+fi
+
+if ! pgrep -x obs >/dev/null; then
+  echo closed
+  exit 0
+fi
+
+log=$(ls -t "$LOGS"/*.txt 2>/dev/null | head -1)
+last=$(grep -h '==== Streaming \(Start\|Stop\)' "$log" 2>/dev/null | tail -1)
+
+if [[ $last == *"Streaming Start"* ]]; then
+  echo live
+else
+  echo idle
+fi
