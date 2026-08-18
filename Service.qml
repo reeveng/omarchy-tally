@@ -59,7 +59,7 @@ Item {
 
   function announce(title, body) {
     if (!setting("announce", true)) return
-    Quickshell.execDetached(["notify-send", "-u", "low", "󰑋  " + title, body])
+    Quickshell.execDetached(["notify-send", "-u", "low", "󰝥  " + title, body])
   }
 
   function hold() {

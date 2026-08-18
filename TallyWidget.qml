@@ -62,7 +62,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰑋"
+    text: "󰝥"
     active: root.live
     dimmed: !root.running
     tooltipText: root.tooltip
