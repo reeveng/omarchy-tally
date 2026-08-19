@@ -1,0 +1,220 @@
+#!/bin/bash
+
+# Ask what a stream is allowed to see, and write the answers down.
+#
+# Everything here can be typed by hand into shell.json instead. This exists
+# because the useful answer to "which browser" is a list of the ones actually
+# installed, and because a browser with a profile of its own is the whole point
+# and nobody wants to write a desktop entry to get one.
+#
+#   obs-tally-setup
+
+set -uo pipefail
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+APPLICATIONS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/stream-browser"
+ENTRY="stream-browser.desktop"
+PLUGIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+for tool in gum jq; do
+  command -v "$tool" >/dev/null || {
+    echo "$tool is needed and is not here" >&2
+    exit 1
+  }
+done
+
+[[ -f $CONFIG ]] || {
+  echo "no shell.json at $CONFIG" >&2
+  exit 1
+}
+
+# The plugin's settings sit on its own entry, whether that entry is the bar
+# widget's or a line in plugins[], so both are looked through and the first one
+# found is the one written to.
+entry_path() {
+  jq -r '
+    [ (.bar.layout.left // []), (.bar.layout.center // []), (.bar.layout.right // []), (.plugins // []) ]
+    | to_entries[] as $list
+    | $list.value | to_entries[] as $item
+    | select(($item.value.id // "") | split("#")[0] == "jmad.tally")
+    | ["left","center","right","plugins"][$list.key] as $name
+    | if $name == "plugins" then "plugins,\($item.key)" else "bar,layout,\($name),\($item.key)" end
+  ' "$CONFIG" | head -1
+}
+
+read_setting() {
+  local path="$1" key="$2" fallback="$3"
+  jq -r --argjson p "[\"${path//,/\",\"}\"]" --arg k "$key" --arg f "$fallback" '
+    getpath($p | map(if test("^[0-9]+$") then tonumber else . end)) | .[$k] // $f | tostring
+  ' "$CONFIG"
+}
+
+write_setting() {
+  local path="$1" key="$2" value="$3" tmp
+  tmp=$(mktemp) || return 1
+  # Written back in the order the rest of the file is in, so a setting added
+  # here reads the same as one typed in by hand.
+  jq --argjson p "[\"${path//,/\",\"}\"]" --arg k "$key" --argjson v "$value" '
+    ($p | map(if test("^[0-9]+$") then tonumber else . end)) as $at
+    | setpath($at + [$k]; $v)
+    | setpath($at; getpath($at) | to_entries | sort_by(.key) | from_entries)
+  ' "$CONFIG" >"$tmp" && mv -- "$tmp" "$CONFIG" || rm -f -- "$tmp"
+}
+
+# Anything that has told the desktop it can open an https link. That is a
+# better list than a guess at the names of browsers, and it is the same list
+# the routing will be choosing from.
+browsers() {
+  local dir file id name exec seen=" "
+  local IFS=:
+  for dir in "${XDG_DATA_HOME:-$HOME/.local/share}" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+    for file in "$dir"/applications/*.desktop; do
+      [[ -f $file ]] || continue
+      id=${file##*/}
+      [[ $seen == *" $id "* ]] && continue
+
+      grep -q '^MimeType=.*x-scheme-handler/https' "$file" || continue
+      grep -qi '^NoDisplay=true' "$file" && continue
+
+      name=$(sed -n 's/^Name=//p' "$file" | head -1)
+      exec=$(sed -n 's/^Exec=//p' "$file" | head -1 | awk '{print $1}')
+      seen+="$id "
+      printf '%s\t%s\t%s\n' "$id" "${name:-$id}" "${exec##*/}"
+    done
+  done
+}
+
+# What a browser wants in order to keep its own history somewhere else. The
+# two families that matter disagree about the spelling and everything else is
+# left to say so.
+profile_exec() {
+  local binary="$1"
+  case "$binary" in
+  chromium | chrome | google-chrome* | brave* | vivaldi* | microsoft-edge* | opera)
+    printf '%s --class=stream-browser --user-data-dir=%s %%U' "$binary" "$PROFILE"
+    ;;
+  firefox* | librewolf* | zen* | floorp* | waterfox*)
+    printf '%s --class=stream-browser --profile %s --new-instance %%U' "$binary" "$PROFILE"
+    ;;
+  *) return 1 ;;
+  esac
+}
+
+write_entry() {
+  local binary="$1" label="$2" line
+  line=$(profile_exec "$binary") || return 1
+
+  mkdir -p -- "$APPLICATIONS"
+  cat >"$APPLICATIONS/$ENTRY" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Stream Browser
+GenericName=Web Browser
+Comment=$label with nothing in it, for links opened while the stream is live
+Icon=$binary
+Exec=$line
+Terminal=false
+StartupNotify=true
+StartupWMClass=stream-browser
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+EOF
+  command -v update-desktop-database >/dev/null && update-desktop-database "$APPLICATIONS" 2>/dev/null
+}
+
+ask_browser() {
+  local path="$1" current choice id
+  current=$(read_setting "$path" streamBrowser "")
+
+  local -a labels=() ids=() binaries=()
+  labels+=("Leave links where they are")
+  ids+=("")
+  binaries+=("")
+
+  while IFS=$'\t' read -r id name binary; do
+    [[ $id == "$ENTRY" ]] && continue
+    labels+=("$name")
+    ids+=("$id")
+    binaries+=("$binary")
+  done < <(browsers | sort -t$'\t' -k2)
+
+  choice=$(printf '%s\n' "${labels[@]}" |
+    gum choose --header="Links opened while the stream is live go to:") || return 0
+
+  local index=0 i
+  for i in "${!labels[@]}"; do
+    [[ ${labels[$i]} == "$choice" ]] && index=$i && break
+  done
+
+  local chosen="${ids[$index]}" binary="${binaries[$index]}"
+
+  if [[ -n $chosen ]] && profile_exec "$binary" >/dev/null; then
+    if gum confirm "Give it a profile of its own, so nothing is signed in and the address bar suggests nothing?"; then
+      write_entry "$binary" "$choice" && chosen="$ENTRY"
+    fi
+  fi
+
+  write_setting "$path" streamBrowser "$(jq -Rn --arg v "$chosen" '$v')"
+
+  if [[ -z $chosen ]]; then
+    echo "Links stay where they are."
+  elif [[ $chosen == "$ENTRY" ]]; then
+    echo "Links go to $choice, in a profile at $PROFILE."
+  else
+    echo "Links go to $choice."
+  fi
+}
+
+ask_drawer() {
+  local path="$1" key="$2" question="$3" current answer
+  current=$(read_setting "$path" "$key" true)
+  [[ $current == false ]] || current=true
+
+  if gum confirm "$question" --default="$current"; then
+    answer=true
+  else
+    answer=false
+  fi
+
+  write_setting "$path" "$key" "$answer"
+}
+
+ask_hook() {
+  local hooks="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/hooks/post-boot.d"
+  [[ -e $hooks/jmad-tally-release ]] && return 0
+  command -v omarchy-hook-install >/dev/null || return 0
+
+  gum confirm "A machine that loses power mid-stream keeps holding your history. Give it back on the next boot?" || return 0
+
+  mkdir -p -- "$hooks"
+  install -m 755 "$PLUGIN/hooks/post-boot" "$hooks/jmad-tally-release" &&
+    echo "Installed the post-boot hook."
+}
+
+main() {
+  local path
+  path=$(entry_path)
+  [[ -n $path ]] || {
+    echo "jmad.tally is not in $CONFIG. Enable the plugin first." >&2
+    exit 1
+  }
+
+  gum style --bold "What a stream is allowed to see"
+  echo
+
+  ask_browser "$path"
+  ask_drawer "$path" hideClipboard "Empty the clipboard history while live?"
+  ask_drawer "$path" hideRecents "Empty the recent files every file dialog offers?"
+  ask_drawer "$path" hideNotifications "Empty the notifications already waiting to be read?"
+  ask_drawer "$path" quiet "Turn do not disturb on for the length of the stream?"
+  ask_drawer "$path" stayAwake "Hold the screen awake for the length of the stream?"
+  ask_hook
+
+  echo
+  echo "Written to $CONFIG. To watch it happen without going live:"
+  echo "  $PLUGIN/bin/obs-tally-simulate live"
+  echo "  $PLUGIN/bin/obs-tally-simulate off"
+}
+
+main "$@"

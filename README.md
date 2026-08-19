@@ -41,6 +41,17 @@ A screen capture takes the screen. Everything a keystroke can open is on
 camera the moment it opens, and the drawers of a desk that has been worked at
 for a year are full of things nobody meant to publish.
 
+One command asks all of it and writes the answers down:
+
+```bash
+~/.config/omarchy/plugins/jmad.tally/bin/obs-tally-setup
+```
+
+It offers the browsers you actually have, since it reads the list from the ones
+that told the desktop they can open a link, and it offers to build the empty
+profile for whichever you pick. Every answer is a line in `shell.json` you
+could have typed yourself, so the menu is a convenience and never the only way.
+
 **Links open somewhere else.** Name a browser in `streamBrowser` and every link
 opened while live goes there instead: `xdg-open` from a terminal, a link
 clicked in a chat, a docs page an editor offers. Point it at a browser with an
@@ -51,7 +62,8 @@ nothing, and no account is signed in.
 { "id": "jmad.tally", "streamBrowser": "stream-browser.desktop" }
 ```
 
-A desktop entry with its own profile directory is the point of the exercise:
+A desktop entry with its own profile directory is the point of the exercise,
+and the one the menu writes looks like this:
 
 ```ini
 [Desktop Entry]
@@ -121,7 +133,7 @@ about a stream when the poll comes round rather than the instant it starts.
 | `hideRecents` | `true` | So are the recent files every file dialog offers |
 | `hideNotifications` | `true` | So is the notification centre's backlog |
 
-From the bar's own settings, or from a terminal:
+From `obs-tally-setup`, from the bar's own settings, or from a terminal:
 
 ```bash
 omarchy bar set jmad.tally announce false --json
