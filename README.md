@@ -35,6 +35,68 @@ A shell that is restarted mid-stream lets go of what it was holding, which is
 worth knowing on the day you edit your config while live: notifications come
 back, and the light goes on saying you are live, because you are.
 
+## What a stream can see, and what it should not
+
+A screen capture takes the screen. Everything a keystroke can open is on
+camera the moment it opens, and the drawers of a desk that has been worked at
+for a year are full of things nobody meant to publish.
+
+**Links open somewhere else.** Name a browser in `streamBrowser` and every link
+opened while live goes there instead: `xdg-open` from a terminal, a link
+clicked in a chat, a docs page an editor offers. Point it at a browser with an
+empty profile and the address bar suggests nothing, the bookmarks bar carries
+nothing, and no account is signed in.
+
+```json
+{ "id": "jmad.tally", "streamBrowser": "stream-browser.desktop" }
+```
+
+A desktop entry with its own profile directory is the point of the exercise:
+
+```ini
+[Desktop Entry]
+Name=Stream Browser
+Exec=chromium --class=stream-browser --user-data-dir=/home/you/.local/share/stream-browser %U
+Type=Application
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+```
+
+Write the path out in full. A desktop entry expands `%U` and nothing else, so
+a tilde in there is a directory called `~`.
+
+Your own `mimeapps.list` is never touched. The routing is a file the plugin
+writes beside it, named for the desktop, which the spec puts above it and which
+the end of the stream deletes.
+
+**The drawers are empty.** The clipboard history, the recent files every file
+dialog offers, and the notifications already waiting to be read are moved out
+of reach while the stream is live and fetched back when it ends. Do not disturb
+stops the next notification; this is about the ones from this morning. What was
+copied during the stream is dropped along with the hiding place, on the grounds
+that a stream's clipboard is nobody's history.
+
+Each is a setting, and each is on by default:
+
+| Key | What it hides |
+| --- | --- |
+| `hideClipboard` | `clipboard-history.json`, everything ever copied |
+| `hideRecents` | `recently-used.xbel`, the recents in every file picker |
+| `hideNotifications` | the notification centre's backlog |
+
+**When the power goes out.** The desk is put away by moving things beside
+themselves and the light going out is what fetches them back, so a machine that
+died mid-stream would come back up with an empty clipboard and no way to know
+better. Install the hook and the first thing a fresh desktop does is ask for
+its history:
+
+```bash
+omarchy hook install post-boot ~/.config/omarchy/plugins/jmad.tally/hooks/post-boot
+```
+
+**What this cannot reach.** A terminal's own history is still a keystroke away,
+and so is what an editor has open, what a shell prompt says about where it is,
+and the stream key in OBS's own settings pane. Those are yours to keep shut.
+
 ## It reads the log, not the websocket
 
 OBS writes `==== Streaming Start ====` and `==== Streaming Stop ====` into the
@@ -54,6 +116,10 @@ about a stream when the poll comes round rather than the instant it starts.
 | `quiet` | `true` | Do not disturb goes on for the length of the stream |
 | `stayAwake` | `true` | The idle lock and the screensaver stay off |
 | `announce` | `true` | A notification as the stream starts, and another as it ends |
+| `streamBrowser` | `""` | The desktop entry links open in while live |
+| `hideClipboard` | `true` | The clipboard history is put away for the stream |
+| `hideRecents` | `true` | So are the recent files every file dialog offers |
+| `hideNotifications` | `true` | So is the notification centre's backlog |
 
 From the bar's own settings, or from a terminal:
 
@@ -90,14 +156,17 @@ your fingers, on a keybinding or in a stream deck script.
 cd ~/.config/omarchy/plugins/jmad.tally/bin
 
 ./obs-tally-state                # live, idle, or closed
-./obs-tally-quiet hold           # silence and hold, remembering what it changed
-./obs-tally-quiet release        # put back only that
-./obs-tally-quiet status
+./obs-tally-hold hold            # put the desk away, remembering what it changed
+./obs-tally-hold hold --browser chromium.desktop
+./obs-tally-hold release         # put back only that
+./obs-tally-hold status
 ```
 
-`OBS_LOG_DIR` moves the directory the logs are read from. `obs-tally-quiet`
+`OBS_LOG_DIR` moves the directory the logs are read from. `obs-tally-hold`
 keeps what it changed in `$XDG_RUNTIME_DIR`, so a second `hold` while one is
-running does nothing and a reboot forgets it.
+running does nothing and a reboot forgets it. What it puts away it puts beside
+itself under `.stream-held`, which a `release` finds whether or not that file
+survived.
 
 ## The service without the light
 
