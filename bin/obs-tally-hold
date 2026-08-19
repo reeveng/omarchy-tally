@@ -1,0 +1,225 @@
+#!/bin/bash
+
+# Hold the desk still for the length of a stream, and put it back afterwards.
+#
+# While a stream is live, notifications stay off the screen, the idle lock
+# leaves it alone, links open in a browser that knows nothing about you, and
+# the drawers a keystroke opens are empty: the clipboard history, the recent
+# files every file dialog offers, the notifications waiting to be read.
+#
+# Only what this turned on is turned off again, and only what this put away is
+# fetched back. Somebody who had do not disturb on before the stream started
+# still has it on after, which is the whole reason there is a file here rather
+# than a pair of assumptions.
+#
+#   obs-tally-hold hold [--browser ID] [--no-dnd] [--no-awake]
+#                       [--no-clipboard] [--no-recents] [--no-notifications]
+#   obs-tally-hold release
+#   obs-tally-hold status
+#
+# A second hold while one is running does nothing, so a shell that restarts
+# mid-stream does not lose what it is holding. A release is safe at any moment
+# and gives back whatever is still standing, which is what the post-boot hook
+# is for: a machine that lost power mid-stream comes back with its history.
+
+set -uo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-hold"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}"
+
+CLIPBOARD="$STATE_DIR/omarchy/clipboard-history.json"
+NOTIFICATIONS="$STATE_DIR/omarchy/notifications/history"
+RECENTS="$DATA_DIR/recently-used.xbel"
+
+# What is put away is moved to this name beside itself, so the moved copy is
+# its own record and a release finds it whether or not the state file lived.
+ASIDE=".stream-held"
+
+MARKER="# written by obs-tally-hold, deleted when the stream ends"
+
+# The read is not quiet: -q suppresses the answer as well as the error, which
+# is a reading of "off" for a desk that is already silent.
+dnd_is_on() {
+  [[ $(omarchy-shell notifications isDnd 2>/dev/null) == "on" ]]
+}
+
+stay_awake_is_on() {
+  omarchy-toggle-idle status 2>/dev/null | grep -q '"enabled":true'
+}
+
+# Where a desktop entry could be. A stream browser named in shell.json and
+# missing from disk would route every link on stream into nothing, so the id is
+# looked up before it is trusted.
+desktop_entry_exists() {
+  local id="$1" dir
+  local IFS=:
+  for dir in "$DATA_DIR" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+    [[ -f $dir/applications/$id ]] && return 0
+  done
+  return 1
+}
+
+# The desktop's own list sits above the one a person edits, so sending links
+# elsewhere never touches mimeapps.list. Holding it is writing a file and
+# releasing it is deleting the same file. The name is the desktop lowercased,
+# which is where glib looks.
+browser_lists() {
+  local name
+  local IFS=:
+  for name in ${XDG_CURRENT_DESKTOP:-}; do
+    [[ -n $name ]] && printf '%s/%s-mimeapps.list\n' "$CONFIG_DIR" "${name,,}"
+  done
+}
+
+route_links() {
+  local id="$1" list wrote=0
+
+  desktop_entry_exists "$id" || {
+    echo "no desktop entry named $id, leaving links where they are" >&2
+    return 1
+  }
+
+  while read -r list; do
+    # Somebody's own file, which this has no business rewriting.
+    [[ -e $list ]] && continue
+
+    cat >"$list" <<EOF
+$MARKER
+[Default Applications]
+text/html=$id
+x-scheme-handler/http=$id
+x-scheme-handler/https=$id
+EOF
+    wrote=1
+  done < <(browser_lists)
+
+  ((wrote))
+}
+
+unroute_links() {
+  local list
+  while read -r list; do
+    [[ -f $list ]] && head -1 "$list" | grep -qxF "$MARKER" && rm -f "$list"
+  done < <(browser_lists)
+}
+
+put_away() {
+  local path="$1" placeholder="${2-}"
+
+  [[ -n $path && -e $path ]] || return 1
+  [[ -e $path$ASIDE ]] && return 1
+
+  mv -- "$path" "$path$ASIDE" || return 1
+
+  if [[ -d $path$ASIDE ]]; then
+    mkdir -p -- "$path"
+  elif [[ -n $placeholder ]]; then
+    printf '%s\n' "$placeholder" >"$path"
+  fi
+}
+
+# What the stream wrote is dropped with it. Anything else would carry the
+# stream's own copies into the history they were hidden from.
+fetch_back() {
+  local path="$1"
+
+  [[ -n $path && -e $path$ASIDE ]] || return 1
+
+  rm -rf -- "$path"
+  mv -- "$path$ASIDE" "$path"
+}
+
+hold() {
+  local want_dnd=1 want_awake=1 want_clipboard=1 want_recents=1 want_notifications=1
+  local browser="" changed=""
+
+  while (($#)); do
+    case "$1" in
+    --browser)
+      browser="${2-}"
+      shift
+      ;;
+    --no-dnd) want_dnd=0 ;;
+    --no-awake) want_awake=0 ;;
+    --no-clipboard) want_clipboard=0 ;;
+    --no-recents) want_recents=0 ;;
+    --no-notifications) want_notifications=0 ;;
+    *)
+      echo "unknown option: $1" >&2
+      exit 1
+      ;;
+    esac
+    shift
+  done
+
+  [[ -f $STATE ]] && exit 0
+
+  if ((want_dnd)) && ! dnd_is_on; then
+    omarchy-shell -q notifications setDnd true >/dev/null 2>&1 && changed+="dnd "
+  fi
+
+  if ((want_awake)) && ! stay_awake_is_on; then
+    omarchy-toggle-idle stay-awake >/dev/null 2>&1 && changed+="awake "
+  fi
+
+  [[ -n $browser ]] && route_links "$browser" && changed+="browser "
+  ((want_clipboard)) && put_away "$CLIPBOARD" "[]" && changed+="clipboard "
+  ((want_recents)) && put_away "$RECENTS" && changed+="recents "
+  ((want_notifications)) && put_away "$NOTIFICATIONS" && changed+="notifications "
+
+  printf '%s\n' "$changed" >"$STATE"
+  echo "holding: ${changed:-nothing}"
+}
+
+release() {
+  local changed=""
+
+  if [[ -f $STATE ]]; then
+    read -r changed <"$STATE"
+    rm -f "$STATE"
+  fi
+
+  # The switches are only thrown back if this was the one that threw them.
+  [[ $changed == *dnd* ]] && omarchy-shell -q notifications setDnd false >/dev/null 2>&1
+  [[ $changed == *awake* ]] && omarchy-toggle-idle allow-idle >/dev/null 2>&1
+
+  # What was put away is asked for by name, so a lost state file costs nobody
+  # their clipboard.
+  unroute_links
+  fetch_back "$CLIPBOARD"
+  fetch_back "$RECENTS"
+  fetch_back "$NOTIFICATIONS"
+
+  echo "released: ${changed:-nothing}"
+}
+
+status() {
+  local changed
+
+  if [[ -f $STATE ]]; then
+    read -r changed <"$STATE"
+    echo "holding: ${changed:-nothing}"
+  else
+    echo "holding: nothing"
+  fi
+}
+
+case "${1:-status}" in
+hold)
+  shift
+  hold "$@"
+  ;;
+release)
+  release
+  ;;
+status)
+  status
+  ;;
+*)
+  echo "usage: ${0##*/} [hold [--browser ID] [--no-dnd] [--no-awake] [--no-clipboard] [--no-recents] [--no-notifications]|release|status]" >&2
+  exit 1
+  ;;
+esac

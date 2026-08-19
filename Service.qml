@@ -2,9 +2,11 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// What happens around a stream rather than in the bar: while OBS is live,
-// notifications stay off the screen and the idle lock leaves it alone, and
-// both go back to whatever they were when the stream ends.
+// What happens around a stream rather than in the bar: while OBS is live the
+// desk is put away, and it comes back out when the stream ends. Notifications
+// stay off the screen, the idle lock leaves it alone, links open in a browser
+// that knows nothing about you, and the clipboard history, the recent files
+// and the unread notifications are out of reach of a keystroke.
 //
 // It is the same question the widget asks, asked separately, because a service
 // and a bar widget are two components with no way to hold one answer between
@@ -62,15 +64,44 @@ Item {
     Quickshell.execDetached(["notify-send", "-u", "low", "󰝥  " + title, body])
   }
 
+  // The desktop entry links are sent to while live. Empty leaves them where
+  // they already go.
+  readonly property string browser: String(setting("streamBrowser", ""))
+
+  // A desktop entry id makes a poor thing to read out, so it is read out
+  // without the part every one of them ends in.
+  readonly property string browserName: browser.replace(/\.desktop$/, "")
+
+  function clauses() {
+    var said = []
+    if (setting("quiet", true)) said.push("notifications are silenced")
+    if (setting("stayAwake", true)) said.push("the screen will not lock")
+    if (browser !== "") said.push("links open in " + browserName)
+    if (setting("hideClipboard", true)) said.push("the clipboard history is empty")
+    if (setting("hideRecents", true) || setting("hideNotifications", true))
+      said.push("so is what a keystroke opens")
+    return said
+  }
+
+  function sentence(said) {
+    if (said.length === 0) return "Nothing is being held"
+    if (said.length === 1) return said[0]
+    return said.slice(0, -1).join(", ") + " and " + said[said.length - 1]
+  }
+
   function hold() {
     if (holding) return
     holding = true
 
-    announce("Live", "Notifications are silenced and the screen will not lock")
+    announce("Live", sentence(clauses()))
 
-    var command = [bin + "obs-tally-quiet", "hold"]
+    var command = [bin + "obs-tally-hold", "hold"]
+    if (browser !== "") command.push("--browser", browser)
     if (!setting("quiet", true)) command.push("--no-dnd")
     if (!setting("stayAwake", true)) command.push("--no-awake")
+    if (!setting("hideClipboard", true)) command.push("--no-clipboard")
+    if (!setting("hideRecents", true)) command.push("--no-recents")
+    if (!setting("hideNotifications", true)) command.push("--no-notifications")
     Quickshell.execDetached(command)
   }
 
@@ -78,7 +109,7 @@ Item {
     if (!holding) return
     holding = false
 
-    Quickshell.execDetached([bin + "obs-tally-quiet", "release"])
+    Quickshell.execDetached([bin + "obs-tally-hold", "release"])
     ended.restart()
   }
 
@@ -86,14 +117,14 @@ Item {
 
   // A shell that is quit or reloaded mid-stream would otherwise leave a desk
   // that never speaks again.
-  Component.onDestruction: if (holding) Quickshell.execDetached([bin + "obs-tally-quiet", "release"])
+  Component.onDestruction: if (holding) Quickshell.execDetached([bin + "obs-tally-hold", "release"])
 
   // The message saying notifications are back has to arrive after they are, or
   // do not disturb eats the one notification that is about itself.
   Timer {
     id: ended
     interval: 500
-    onTriggered: root.announce("Stream ended", "Notifications and the idle lock are back")
+    onTriggered: root.announce("Stream ended", "The desk is back the way you left it")
   }
 
   Process {

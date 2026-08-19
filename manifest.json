@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "jmad.tally",
   "name": "Tally",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "jmad",
-  "description": "A tally light for OBS: dim while it is closed, lit while the stream is live",
+  "description": "A tally light for OBS, and a desk that puts itself away for the length of the stream",
   "kinds": [
     "bar-widget",
     "service"
@@ -20,10 +20,14 @@
     "allowMultiple": false,
     "defaultSection": "center",
     "defaults": {
+      "announce": true,
+      "hideClipboard": true,
+      "hideNotifications": true,
+      "hideRecents": true,
       "intervalMs": 3000,
       "quiet": true,
       "stayAwake": true,
-      "announce": true
+      "streamBrowser": ""
     },
     "schema": [
       {
@@ -55,6 +59,34 @@
         "label": "Say when the stream starts and ends",
         "defaultValue": true,
         "description": "A notification as the stream goes live, and another as it ends."
+      },
+      {
+        "key": "streamBrowser",
+        "type": "string",
+        "label": "Open links in",
+        "defaultValue": "",
+        "description": "A desktop entry, such as chromium.desktop, that links go to while the stream is live. Empty leaves them where they already go."
+      },
+      {
+        "key": "hideClipboard",
+        "type": "boolean",
+        "label": "Empty the clipboard history while live",
+        "defaultValue": true,
+        "description": "Put the clipboard history away for the length of the stream, and fetch it back at the end. What was copied during the stream goes with it."
+      },
+      {
+        "key": "hideRecents",
+        "type": "boolean",
+        "label": "Empty the recent files while live",
+        "defaultValue": true,
+        "description": "Put the recent files every file dialog offers away for the length of the stream."
+      },
+      {
+        "key": "hideNotifications",
+        "type": "boolean",
+        "label": "Empty the notification centre while live",
+        "defaultValue": true,
+        "description": "Put the notifications already waiting to be read away for the length of the stream. Do not disturb only stops the next one."
       }
     ]
   }
