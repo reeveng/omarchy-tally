@@ -180,6 +180,55 @@ ask_drawer() {
   write_setting "$path" "$key" "$answer"
 }
 
+# Every widget currently on the bar, by id and by the name its manifest gives
+# it, so the question is asked in the words the bar is wearing.
+bar_widgets() {
+  local names id name
+  names=$(omarchy plugin list --json 2>/dev/null |
+    jq -r '(if type == "array" then . else (.plugins // []) end)[] | "\(.id)\t\(.name // .id)"' 2>/dev/null)
+
+  while IFS= read -r id; do
+    [[ -n $id && $id != "jmad.tally" ]] || continue
+    name=$(printf '%s\n' "$names" | awk -F'\t' -v want="$id" '$1 == want {print $2; exit}')
+    printf '%s\t%s\n' "$id" "${name:-$id}"
+  done < <(jq -r '["left","center","right"][] as $s | (.bar.layout[$s] // [])[] | .id // empty | split("#")[0]' "$CONFIG")
+}
+
+ask_widgets() {
+  local path="$1" current chosen id name
+  current=$(jq -r --argjson p "[\"${path//,/\",\"}\"]" '
+    getpath($p | map(if test("^[0-9]+$") then tonumber else . end)) | .hideWidgets // [] | join(" ")
+  ' "$CONFIG")
+
+  local -a labels=() ids=() selected=()
+  while IFS=$'\t' read -r id name; do
+    labels+=("$name")
+    ids+=("$id")
+    [[ " $current " == *" $id "* ]] && selected+=("$name")
+  done < <(bar_widgets)
+
+  ((${#labels[@]})) || return 0
+
+  local -a args=(--no-limit --header="Bar widgets that come off the bar while live (space to pick, enter to accept):")
+  ((${#selected[@]})) && args+=(--selected="$(
+    IFS=,
+    echo "${selected[*]}"
+  )")
+
+  chosen=$(printf '%s\n' "${labels[@]}" | gum choose "${args[@]}") || return 0
+
+  local -a picked=()
+  local line i
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    for i in "${!labels[@]}"; do
+      [[ ${labels[$i]} == "$line" ]] && picked+=("${ids[$i]}") && break
+    done
+  done <<<"$chosen"
+
+  write_setting "$path" hideWidgets "$(printf '%s\n' "${picked[@]}" | jq -R . | jq -sc 'map(select(. != ""))')"
+}
+
 ask_hook() {
   local hooks="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/hooks/post-boot.d"
   [[ -e $hooks/jmad-tally-release ]] && return 0
@@ -207,6 +256,8 @@ main() {
   ask_drawer "$path" hideClipboard "Empty the clipboard history while live?"
   ask_drawer "$path" hideRecents "Empty the recent files every file dialog offers?"
   ask_drawer "$path" hideNotifications "Empty the notifications already waiting to be read?"
+  ask_drawer "$path" hideHistory "Empty the shell history, so Ctrl-R and autosuggestion answer with nothing?"
+  ask_widgets "$path"
   ask_drawer "$path" quiet "Turn do not disturb on for the length of the stream?"
   ask_drawer "$path" stayAwake "Hold the screen awake for the length of the stream?"
   ask_hook

@@ -5,8 +5,9 @@ import Quickshell.Io
 // What happens around a stream rather than in the bar: while OBS is live the
 // desk is put away, and it comes back out when the stream ends. Notifications
 // stay off the screen, the idle lock leaves it alone, links open in a browser
-// that knows nothing about you, and the clipboard history, the recent files
-// and the unread notifications are out of reach of a keystroke.
+// that knows nothing about you, the clipboard history, the recent files, the
+// unread notifications and the shell history are out of reach of a keystroke,
+// and any bar widget that says too much comes off the bar.
 //
 // It is the same question the widget asks, asked separately, because a service
 // and a bar widget are two components with no way to hold one answer between
@@ -72,14 +73,23 @@ Item {
   // without the part every one of them ends in.
   readonly property string browserName: browser.replace(/\.desktop$/, "")
 
+  // Which bar widgets come off the bar while live. Ids, as they read in
+  // shell.json.
+  readonly property var widgets: {
+    var value = setting("hideWidgets", [])
+    return Array.isArray(value) ? value : []
+  }
+
   function clauses() {
     var said = []
     if (setting("quiet", true)) said.push("notifications are silenced")
     if (setting("stayAwake", true)) said.push("the screen will not lock")
     if (browser !== "") said.push("links open in " + browserName)
-    if (setting("hideClipboard", true)) said.push("the clipboard history is empty")
+    if (setting("hideClipboard", true) || setting("hideHistory", true))
+      said.push("the clipboard and the shell have no history")
     if (setting("hideRecents", true) || setting("hideNotifications", true))
-      said.push("so is what a keystroke opens")
+      said.push("neither has anything a keystroke opens")
+    if (widgets.length > 0) said.push("the bar says less")
     return said
   }
 
@@ -102,6 +112,8 @@ Item {
     if (!setting("hideClipboard", true)) command.push("--no-clipboard")
     if (!setting("hideRecents", true)) command.push("--no-recents")
     if (!setting("hideNotifications", true)) command.push("--no-notifications")
+    if (!setting("hideHistory", true)) command.push("--no-history")
+    for (var i = 0; i < widgets.length; i++) command.push("--hide-widget", String(widgets[i]))
     Quickshell.execDetached(command)
   }
 

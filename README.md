@@ -94,6 +94,36 @@ Each is a setting, and each is on by default:
 | `hideClipboard` | `clipboard-history.json`, everything ever copied |
 | `hideRecents` | `recently-used.xbel`, the recents in every file picker |
 | `hideNotifications` | the notification centre's backlog |
+| `hideHistory` | the shell history behind Ctrl-R and autosuggestion |
+
+**The shell forgets too.** `hideHistory` wants one line in your `.zshrc` or
+`.bashrc`, because a shell cannot be reached into from outside:
+
+```bash
+source ~/.config/omarchy/plugins/jmad.tally/shell/tally-history.sh
+```
+
+Every prompt after that asks whether the light is on, which costs a test on a
+file and no process at all. While it is, zsh pushes the history onto its own
+stack and starts an empty one that is never written anywhere; bash writes its
+out, drops it, and reads it back at the end. Either way Ctrl-R answers with
+nothing, autosuggestion offers nothing, and what you type during the stream is
+forgotten when it ends. Shells already open when the light comes on are covered
+at their next prompt.
+
+**The bar says less.** A widget can be a leak with a mouse on it. Omarchy's
+Tailscale panel lists every machine on your tailnet by name with a button to
+copy its address, which is an inventory of your infrastructure one click from
+anybody watching. Name such widgets in `hideWidgets` and they come off the bar
+for the length of the stream:
+
+```json
+{ "id": "jmad.tally", "hideWidgets": ["omarchy.tailscale"] }
+```
+
+The entry is lifted out of the layout and kept beside `shell.json` with the
+section and the place it held, so the bar comes back in the order it was in
+rather than wherever the widget's own manifest would have put it.
 
 **When the power goes out.** The desk is put away by moving things beside
 themselves and the light going out is what fetches them back, so a machine that
@@ -132,6 +162,8 @@ about a stream when the poll comes round rather than the instant it starts.
 | `hideClipboard` | `true` | The clipboard history is put away for the stream |
 | `hideRecents` | `true` | So are the recent files every file dialog offers |
 | `hideNotifications` | `true` | So is the notification centre's backlog |
+| `hideHistory` | `true` | Ctrl-R and autosuggestion answer with nothing |
+| `hideWidgets` | `[]` | Bar widgets that come off the bar while live |
 
 From `obs-tally-setup`, from the bar's own settings, or from a terminal:
 
@@ -169,7 +201,7 @@ cd ~/.config/omarchy/plugins/jmad.tally/bin
 
 ./obs-tally-state                # live, idle, or closed
 ./obs-tally-hold hold            # put the desk away, remembering what it changed
-./obs-tally-hold hold --browser chromium.desktop
+./obs-tally-hold hold --browser chromium.desktop --hide-widget omarchy.tailscale
 ./obs-tally-hold release         # put back only that
 ./obs-tally-hold status
 ```

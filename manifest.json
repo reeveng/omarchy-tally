@@ -22,8 +22,10 @@
     "defaults": {
       "announce": true,
       "hideClipboard": true,
+      "hideHistory": true,
       "hideNotifications": true,
       "hideRecents": true,
+      "hideWidgets": [],
       "intervalMs": 3000,
       "quiet": true,
       "stayAwake": true,
@@ -87,6 +89,13 @@
         "label": "Empty the notification centre while live",
         "defaultValue": true,
         "description": "Put the notifications already waiting to be read away for the length of the stream. Do not disturb only stops the next one."
+      },
+      {
+        "key": "hideHistory",
+        "type": "boolean",
+        "label": "Empty the shell history while live",
+        "defaultValue": true,
+        "description": "Ctrl-R and autosuggestion answer with nothing for the length of the stream, and what is typed during it is forgotten. Needs shell/tally-history.sh sourced from your shell."
       }
     ]
   }

@@ -5,15 +5,18 @@
 # While a stream is live, notifications stay off the screen, the idle lock
 # leaves it alone, links open in a browser that knows nothing about you, and
 # the drawers a keystroke opens are empty: the clipboard history, the recent
-# files every file dialog offers, the notifications waiting to be read.
+# files every file dialog offers, the notifications waiting to be read, the
+# shell history behind a Ctrl-R. Bar widgets that name their machines out loud
+# come off the bar.
 #
 # Only what this turned on is turned off again, and only what this put away is
 # fetched back. Somebody who had do not disturb on before the stream started
 # still has it on after, which is the whole reason there is a file here rather
 # than a pair of assumptions.
 #
-#   obs-tally-hold hold [--browser ID] [--no-dnd] [--no-awake]
-#                       [--no-clipboard] [--no-recents] [--no-notifications]
+#   obs-tally-hold hold [--browser ID] [--hide-widget ID]... [--no-dnd]
+#                       [--no-awake] [--no-clipboard] [--no-recents]
+#                       [--no-notifications] [--no-history]
 #   obs-tally-hold release
 #   obs-tally-hold status
 #
@@ -33,6 +36,11 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}"
 CLIPBOARD="$STATE_DIR/omarchy/clipboard-history.json"
 NOTIFICATIONS="$STATE_DIR/omarchy/notifications/history"
 RECENTS="$DATA_DIR/recently-used.xbel"
+SHELL_CONFIG="$CONFIG_DIR/omarchy/shell.json"
+
+# A shell cannot be reached into from out here, so it is told instead. The file
+# is the whole message, and shell/tally-history.sh is what reads it.
+HISTORY_FLAG="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-history"
 
 # What is put away is moved to this name beside itself, so the moved copy is
 # its own record and a release finds it whether or not the state file lived.
@@ -106,6 +114,65 @@ unroute_links() {
   done < <(browser_lists)
 }
 
+# A bar widget that names your machines out loud is a leak with a mouse on it.
+# The entry is lifted out of the layout and kept beside shell.json with the
+# section and the place in it, so the bar comes back in the order it was in
+# rather than wherever the widget's manifest would have put it.
+hide_widgets() {
+  local ids=("$@") list held tmp
+
+  ((${#ids[@]})) || return 1
+  command -v jq >/dev/null || return 1
+  [[ -f $SHELL_CONFIG && ! -e $SHELL_CONFIG$ASIDE ]] || return 1
+
+  list=$(printf '%s\n' "${ids[@]}" | jq -R . | jq -sc .) || return 1
+
+  held=$(jq -c --argjson ids "$list" '
+    [ ["left","center","right"][] as $section
+      | (.bar.layout[$section] // []) | to_entries[] as $at
+      | select($ids | index(($at.value.id // "") | split("#")[0]))
+      | {section: $section, index: $at.key, entry: $at.value} ]
+  ' "$SHELL_CONFIG") || return 1
+
+  [[ $held == "[]" ]] && return 1
+
+  tmp=$(mktemp) || return 1
+  jq --argjson ids "$list" '
+    .bar.layout |= with_entries(
+      if (.key | IN("left","center","right"))
+      then .value |= map(. as $e | select(($ids | index(($e.id // "") | split("#")[0])) | not))
+      else . end)
+  ' "$SHELL_CONFIG" >"$tmp" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+
+  printf '%s\n' "$held" >"$SHELL_CONFIG$ASIDE"
+  mv -- "$tmp" "$SHELL_CONFIG"
+}
+
+show_widgets() {
+  local tmp
+
+  [[ -f $SHELL_CONFIG$ASIDE ]] || return 1
+  command -v jq >/dev/null || return 1
+
+  tmp=$(mktemp) || return 1
+
+  # Put back in the order they were taken, so each one lands at the place it
+  # left from and the ones after it shuffle along exactly once.
+  jq --slurpfile held "$SHELL_CONFIG$ASIDE" '
+    reduce (($held[0] // []) | sort_by(.index))[] as $it (.;
+      .bar.layout[$it.section] = (
+        (.bar.layout[$it.section] // [])[0:$it.index]
+        + [$it.entry]
+        + (.bar.layout[$it.section] // [])[$it.index:]))
+  ' "$SHELL_CONFIG" >"$tmp" && mv -- "$tmp" "$SHELL_CONFIG" && rm -f -- "$SHELL_CONFIG$ASIDE" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+}
+
 put_away() {
   local path="$1" placeholder="${2-}"
 
@@ -134,7 +201,7 @@ fetch_back() {
 
 hold() {
   local want_dnd=1 want_awake=1 want_clipboard=1 want_recents=1 want_notifications=1
-  local browser="" changed=""
+  local want_history=1 browser="" changed="" widgets=()
 
   while (($#)); do
     case "$1" in
@@ -142,11 +209,16 @@ hold() {
       browser="${2-}"
       shift
       ;;
+    --hide-widget)
+      [[ -n ${2-} ]] && widgets+=("$2")
+      shift
+      ;;
     --no-dnd) want_dnd=0 ;;
     --no-awake) want_awake=0 ;;
     --no-clipboard) want_clipboard=0 ;;
     --no-recents) want_recents=0 ;;
     --no-notifications) want_notifications=0 ;;
+    --no-history) want_history=0 ;;
     *)
       echo "unknown option: $1" >&2
       exit 1
@@ -169,6 +241,8 @@ hold() {
   ((want_clipboard)) && put_away "$CLIPBOARD" "[]" && changed+="clipboard "
   ((want_recents)) && put_away "$RECENTS" && changed+="recents "
   ((want_notifications)) && put_away "$NOTIFICATIONS" && changed+="notifications "
+  ((want_history)) && : >"$HISTORY_FLAG" && changed+="history "
+  ((${#widgets[@]})) && hide_widgets "${widgets[@]}" && changed+="widgets "
 
   printf '%s\n' "$changed" >"$STATE"
   echo "holding: ${changed:-nothing}"
@@ -192,6 +266,8 @@ release() {
   fetch_back "$CLIPBOARD"
   fetch_back "$RECENTS"
   fetch_back "$NOTIFICATIONS"
+  show_widgets
+  rm -f -- "$HISTORY_FLAG"
 
   echo "released: ${changed:-nothing}"
 }
@@ -219,7 +295,7 @@ status)
   status
   ;;
 *)
-  echo "usage: ${0##*/} [hold [--browser ID] [--no-dnd] [--no-awake] [--no-clipboard] [--no-recents] [--no-notifications]|release|status]" >&2
+  echo "usage: ${0##*/} [hold [--browser ID] [--hide-widget ID] [--no-dnd] [--no-awake] [--no-clipboard] [--no-recents] [--no-notifications] [--no-history]|release|status]" >&2
   exit 1
   ;;
 esac
