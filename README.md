@@ -132,7 +132,7 @@ better. Install the hook and the first thing a fresh desktop does is ask for
 its history:
 
 ```bash
-omarchy hook install post-boot ~/.config/omarchy/plugins/jmad.tally/hooks/post-boot
+omarchy hook install post-boot ~/.config/omarchy/plugins/jmad.tally/hooks/jmad-tally-release
 ```
 
 **What this cannot reach.** A terminal's own history is still a keystroke away,
@@ -221,6 +221,29 @@ leave the widget off the bar and put the plugin in `plugins[]` in
 ```json
 { "id": "jmad.tally", "announce": true }
 ```
+
+## Removing it
+
+The desk is put back by the same scripts that put it away, so let go of
+anything still held before the plugin goes:
+
+```bash
+~/.config/omarchy/plugins/jmad.tally/bin/obs-tally-hold release
+omarchy plugin remove jmad.tally
+```
+
+That takes the widget off the bar and deletes the folder. Two things live
+outside it and stay behind. The `source` line in your `.zshrc` or `.bashrc` now
+points at a file that is not there, and every new shell will say so until you
+delete the line. The hook, if you installed it, is a copy:
+
+```bash
+rm ~/.config/omarchy/hooks/post-boot.d/jmad-tally-release
+```
+
+Nothing else was ever written. Do not disturb, the idle lock, the clipboard
+history and the recent files are yours again the moment the release runs, and
+your own `mimeapps.list` was never touched to begin with.
 
 ## Requirements
 

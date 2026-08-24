@@ -7,7 +7,7 @@
 #
 # Install it with:
 #
-#   omarchy hook install post-boot ~/.config/omarchy/plugins/jmad.tally/hooks/post-boot
+#   omarchy hook install post-boot ~/.config/omarchy/plugins/jmad.tally/hooks/jmad-tally-release
 
 for root in "${XDG_CONFIG_HOME:-$HOME/.config}"/omarchy/plugins "$HOME"/.local/share/omarchy/plugins; do
   hold="$root/jmad.tally/bin/obs-tally-hold"
