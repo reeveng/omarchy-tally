@@ -250,6 +250,11 @@ your own `mimeapps.list` was never touched to begin with.
 Omarchy, with the shell's plugin directory (`omarchy plugin list` answers). OBS
 Studio, for there to be anything to say.
 
+Nothing is installed beyond the plugin itself. The scripts are bash and lean on
+`jq` and `pgrep`, which Omarchy already has, and on `omarchy` for every switch
+they throw. Writing a stream browser's desktop entry uses
+`update-desktop-database` where it exists and skips it where it does not.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
