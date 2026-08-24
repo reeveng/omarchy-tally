@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jmad.tally",
   "name": "Tally",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "jmad",
   "description": "A tally light for OBS, and a desk that puts itself away for the length of the stream",
   "kinds": [

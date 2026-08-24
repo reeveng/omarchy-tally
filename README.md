@@ -3,7 +3,7 @@
 A studio has a light on the camera that is live, so nobody has to guess which
 one is on. This is that light, in the Omarchy bar, wired to OBS.
 
-![The dot, closed, open and live](docs/states.png)
+![The dot, closed, open and live](preview.png)
 
 Dim while OBS is closed, plain while it is open, lit while the stream is going
 out. Clicking it raises OBS, or starts it.
@@ -95,6 +95,15 @@ Each is a setting, and each is on by default:
 | `hideRecents` | `recently-used.xbel`, the recents in every file picker |
 | `hideNotifications` | the notification centre's backlog |
 | `hideHistory` | the shell history behind Ctrl-R and autosuggestion |
+
+**When a drawer is not where it should be.** The three above are Omarchy's own
+files, at the paths Omarchy keeps them at. Somebody whose clipboard lives in
+cliphist or clipse has a history this does not know how to reach, and a later
+Omarchy could move one of these without asking. Rather than hold nothing and
+say the desk is clear, a hold that finds nothing to put away names what it
+could not find, in a notification loud enough to arrive with do not disturb
+already on. A machine that has never copied anything says the same thing, which
+is the honest answer to the same question.
 
 **The shell forgets too.** `hideHistory` wants one line in your `.zshrc` or
 `.bashrc`, because a shell cannot be reached into from outside:

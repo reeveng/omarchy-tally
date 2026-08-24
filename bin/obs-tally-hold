@@ -199,9 +199,38 @@ fetch_back() {
   mv -- "$path$ASIDE" "$path"
 }
 
+# A drawer asked for and not found is the failure worth hearing about: the
+# setting is on, the stream is live, and the drawer is open after all. Either
+# there is nothing in it yet, or it is somebody else's and this does not know
+# where they keep it. Both are worth a sentence before the camera does.
+hold_away() {
+  local what="$1" path="$2" placeholder="${3-}"
+
+  if put_away "$path" "$placeholder"; then
+    return 0
+  fi
+
+  missing+=("$what ($path)")
+  return 1
+}
+
+# Above do not disturb on purpose. This one is about the switch that was just
+# thrown, so it is the one notification a silenced desk still has to show.
+say_missing() {
+  ((${#missing[@]})) || return 0
+
+  local body
+  body=$(printf '%s\n' "${missing[@]}")
+  echo "not put away: $body" >&2
+  command -v notify-send >/dev/null \
+    && notify-send -u critical "󰝥  Still open on camera" \
+      "Nothing was found to put away here, so it was left as it is:
+$body"
+}
+
 hold() {
   local want_dnd=1 want_awake=1 want_clipboard=1 want_recents=1 want_notifications=1
-  local want_history=1 browser="" changed="" widgets=()
+  local want_history=1 browser="" changed="" widgets=() missing=()
 
   while (($#)); do
     case "$1" in
@@ -238,13 +267,14 @@ hold() {
   fi
 
   [[ -n $browser ]] && route_links "$browser" && changed+="browser "
-  ((want_clipboard)) && put_away "$CLIPBOARD" "[]" && changed+="clipboard "
-  ((want_recents)) && put_away "$RECENTS" && changed+="recents "
-  ((want_notifications)) && put_away "$NOTIFICATIONS" && changed+="notifications "
+  ((want_clipboard)) && hold_away "the clipboard history" "$CLIPBOARD" "[]" && changed+="clipboard "
+  ((want_recents)) && hold_away "the recent files" "$RECENTS" && changed+="recents "
+  ((want_notifications)) && hold_away "the notification backlog" "$NOTIFICATIONS" && changed+="notifications "
   ((want_history)) && : >"$HISTORY_FLAG" && changed+="history "
   ((${#widgets[@]})) && hide_widgets "${widgets[@]}" && changed+="widgets "
 
   printf '%s\n' "$changed" >"$STATE"
+  say_missing
   echo "holding: ${changed:-nothing}"
 }
 
