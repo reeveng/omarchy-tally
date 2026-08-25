@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+#
 # A shell that has been worked in for a year answers Ctrl-R with tokens,
 # hostnames and the shape of everything you run. Autosuggestion offers the same
 # thing without being asked. So for the length of a stream this shell keeps its

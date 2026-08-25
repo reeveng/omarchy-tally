@@ -176,6 +176,10 @@ about a stream when the poll comes round rather than the instant it starts.
 | `hideHistory` | `true` | Ctrl-R and autosuggestion answer with nothing |
 | `hideWidgets` | `[]` | Bar widgets that come off the bar while live |
 
+Every one of those but `hideWidgets` is in the bar's own settings panel. That
+one is the ids of the widgets on your bar, which a manifest written in advance
+cannot list, so it is set by `obs-tally-setup` or by hand.
+
 From `obs-tally-setup`, from the bar's own settings, or from a terminal:
 
 ```bash
@@ -226,6 +230,28 @@ no symlink: every write is a create-or-fail open, so a link left at one of the
 names it owns is refused by the open itself rather than by a test in front of
 it. What it puts away it puts beside itself under `.stream-held`, which a
 `release` finds whether or not that file survived.
+
+## Tried on a desk of its own
+
+```bash
+test/run              # every test
+test/run link         # only the tests with that word in their name
+```
+
+Every test gets a temporary desk: its own config, data, state and runtime
+directories, its own `shell.json`, and stubs on `PATH` for the parts of Omarchy
+it would otherwise be talking to. Nothing it does touches the desk it runs on
+and none of it needs OBS, which is what makes it worth running before a change
+goes anywhere.
+
+What is checked is what somebody would otherwise find out the hard way: that a
+release gives back exactly what the hold took and nothing the stream wrote,
+that switches somebody had already thrown stay thrown, that a widget comes back
+at the place it left from, that a link left at any name the plugin writes is
+never followed, that a name swapped in while a hold is running is not either,
+that the state goes nowhere shared, that OBS is found whether it was installed
+from a repository or as a flatpak, and that every path the scripts and the
+README name is a path that exists.
 
 ## The service without the light
 

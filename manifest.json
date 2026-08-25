@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jmad.tally",
   "name": "Tally",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "author": "jmad",
   "description": "A record dot that lights the moment OBS goes live, and a desk that puts its notifications, clipboard and history away until it ends",
   "kinds": [

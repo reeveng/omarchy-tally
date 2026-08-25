@@ -1,0 +1,633 @@
+#!/bin/bash
+
+# The plugin, tried on a desk of its own.
+#
+# Every test gets a fresh desk under a temporary directory: its own config,
+# data, state and runtime directories, its own shell.json, and stubs on PATH
+# for the parts of Omarchy it would otherwise be talking to. Nothing here reads
+# or writes the desk it is run from, and no test needs OBS.
+#
+#   test/run              every test
+#   test/run link         only the tests whose name has that word in it
+#
+# A test is a function whose name starts with test_. They run in the order they
+# are written in, each in a subshell, each on a desk of its own.
+
+set -uo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+FILTER="${1:-}"
+
+# --- a desk of its own -------------------------------------------------------
+
+desk() {
+  DESK=$(mktemp -d)
+  export TALLY_DESK="$DESK"
+
+  mkdir -p \
+    "$DESK/cfg/omarchy" \
+    "$DESK/data/applications" \
+    "$DESK/home" \
+    "$DESK/run" \
+    "$DESK/share/applications" \
+    "$DESK/state/omarchy/notifications" \
+    "$DESK/stub"
+
+  echo '["a secret copied last week"]' >"$DESK/state/omarchy/clipboard-history.json"
+  printf '<xbel/>\n' >"$DESK/data/recently-used.xbel"
+  printf 'an unread notification\n' >"$DESK/state/omarchy/notifications/history"
+  echo 'PRECIOUS' >"$DESK/precious"
+
+  layout '{"right":[{"id":"omarchy.tailscale"},{"id":"jmad.tally"}]}'
+  installed chromium.desktop
+
+  echo off >"$DESK/dnd"
+  echo false >"$DESK/awake"
+  echo yes >"$DESK/obs"
+
+  stubs
+}
+
+layout() {
+  printf '{"bar":{"layout":%s}}\n' "$1" >"$DESK/cfg/omarchy/shell.json"
+}
+
+installed() {
+  printf '[Desktop Entry]\nName=A Browser\nExec=browser %%U\n' >"$DESK/data/applications/$1"
+}
+
+stubs() {
+  cat >"$DESK/stub/omarchy-shell" <<'STUB'
+#!/bin/bash
+args=("$@")
+[[ ${args[0]:-} == -q ]] && args=("${args[@]:1}")
+case "${args[*]}" in
+"notifications isDnd") cat "$TALLY_DESK/dnd" ;;
+"notifications setDnd true")
+  echo on >"$TALLY_DESK/dnd"
+  echo "dnd on" >>"$TALLY_DESK/calls"
+  ;;
+"notifications setDnd false")
+  echo off >"$TALLY_DESK/dnd"
+  echo "dnd off" >>"$TALLY_DESK/calls"
+  ;;
+*) exit 1 ;;
+esac
+STUB
+
+  cat >"$DESK/stub/omarchy-toggle-idle" <<'STUB'
+#!/bin/bash
+case "${1:-}" in
+status) printf '{"enabled":%s}\n' "$(cat "$TALLY_DESK/awake")" ;;
+stay-awake)
+  echo true >"$TALLY_DESK/awake"
+  echo "awake on" >>"$TALLY_DESK/calls"
+  ;;
+allow-idle)
+  echo false >"$TALLY_DESK/awake"
+  echo "awake off" >>"$TALLY_DESK/calls"
+  ;;
+*) exit 1 ;;
+esac
+STUB
+
+  cat >"$DESK/stub/notify-send" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$TALLY_DESK/notifications"
+STUB
+
+  cat >"$DESK/stub/pgrep" <<'STUB'
+#!/bin/bash
+[[ $(cat "$TALLY_DESK/obs") == yes ]]
+STUB
+
+  chmod +x "$DESK"/stub/*
+}
+
+# --- the scripts, run on that desk -------------------------------------------
+
+on_desk() {
+  env PATH="$DESK/stub:$PATH" HOME="$DESK/home" \
+    XDG_CONFIG_HOME="$DESK/cfg" XDG_CURRENT_DESKTOP=Hyprland \
+    XDG_DATA_DIRS="$DESK/share" XDG_DATA_HOME="$DESK/data" \
+    XDG_RUNTIME_DIR="$DESK/run" XDG_STATE_HOME="$DESK/state" \
+    "$@"
+}
+
+tally() { on_desk "$ROOT/bin/obs-tally-hold" "$@"; }
+light() { on_desk "$ROOT/bin/obs-tally-state"; }
+pretend() { on_desk "$ROOT/bin/obs-tally-simulate" "$@"; }
+
+held() { tally hold --no-dnd --no-awake "$@"; }
+
+clipboard() { cat "$DESK/state/omarchy/clipboard-history.json" 2>/dev/null; }
+mimeapps() { echo "$DESK/cfg/hyprland-mimeapps.list"; }
+sections() { jq -c '.bar.layout' "$DESK/cfg/omarchy/shell.json"; }
+
+# --- what a test can say -----------------------------------------------------
+
+note() {
+  printf '    %s\n      got:  %s\n      want: %s\n' "$1" "$2" "$3"
+  : >"$DESK/failed"
+}
+
+is() {
+  [[ $2 == "$3" ]] || note "$1" "$2" "$3"
+}
+
+has() {
+  [[ $2 == *"$3"* ]] || note "$1" "$2" "something with: $3"
+}
+
+there() {
+  [[ -e $1 ]] || note "$2" "not there" "$1"
+}
+
+gone() {
+  if [[ -e $1 ]]; then note "$2" "still there" "$1 gone"; fi
+}
+
+intact() {
+  is "${2:-the file it pointed at is untouched}" "$(cat "$DESK/precious")" "PRECIOUS"
+}
+
+# --- holding a desk, and giving it back --------------------------------------
+
+test_holds_the_drawers_and_gives_them_back() {
+  held >/dev/null
+  is "the clipboard is empty while live" "$(clipboard)" "[]"
+  there "$DESK/state/omarchy/clipboard-history.json.stream-held" "the clipboard is kept beside itself"
+  gone "$DESK/data/recently-used.xbel" "the recent files are away"
+  gone "$DESK/state/omarchy/notifications/history" "the backlog is away"
+  there "$DESK/run/obs-tally-history" "the shell is told"
+
+  tally release >/dev/null
+  is "the clipboard is back word for word" "$(clipboard)" '["a secret copied last week"]'
+  is "the recent files are back" "$(cat "$DESK/data/recently-used.xbel")" "<xbel/>"
+  is "the backlog is back" "$(cat "$DESK/state/omarchy/notifications/history")" "an unread notification"
+  gone "$DESK/run/obs-tally-history" "the shell is told the stream ended"
+  gone "$DESK/state/omarchy/clipboard-history.json.stream-held" "nothing is left beside itself"
+}
+
+test_what_the_stream_wrote_goes_with_it() {
+  held >/dev/null
+  echo '["a token pasted on camera"]' >"$DESK/state/omarchy/clipboard-history.json"
+  tally release >/dev/null
+  is "what was copied while live is dropped" "$(clipboard)" '["a secret copied last week"]'
+}
+
+test_a_desk_already_silent_stays_silent() {
+  echo on >"$DESK/dnd"
+  echo true >"$DESK/awake"
+
+  tally hold >/dev/null
+  tally release >/dev/null
+
+  is "do not disturb is left as it was found" "$(cat "$DESK/dnd")" "on"
+  is "the idle lock is left as it was found" "$(cat "$DESK/awake")" "true"
+  is "neither switch was touched" "$(cat "$DESK/calls" 2>/dev/null)" ""
+}
+
+test_the_switches_it_threw_are_thrown_back() {
+  tally hold >/dev/null
+  is "do not disturb is on while live" "$(cat "$DESK/dnd")" "on"
+  is "the screen is held awake" "$(cat "$DESK/awake")" "true"
+
+  tally release >/dev/null
+  is "do not disturb is off again" "$(cat "$DESK/dnd")" "off"
+  is "the idle lock is back" "$(cat "$DESK/awake")" "false"
+}
+
+test_a_second_hold_keeps_the_first() {
+  held >/dev/null
+  local first
+  first=$(tally status)
+  held >/dev/null
+  is "the second hold changes nothing" "$(tally status)" "$first"
+
+  tally release >/dev/null
+  is "the clipboard still comes back" "$(clipboard)" '["a secret copied last week"]'
+}
+
+test_a_lost_state_file_still_gives_the_drawers_back() {
+  held >/dev/null
+  rm -f "$DESK/run/obs-tally-hold"
+
+  tally release >/dev/null
+  is "what was put away is asked for by name" "$(clipboard)" '["a secret copied last week"]'
+}
+
+test_a_drawer_it_cannot_find_is_said_out_loud() {
+  rm -f "$DESK/state/omarchy/clipboard-history.json"
+
+  local said
+  said=$(held 2>&1)
+  has "the missing drawer is named" "$said" "the clipboard history"
+  has "the rest is still held" "$said" "recents"
+  has "and a notification says so" "$(cat "$DESK/notifications")" "Still open on camera"
+}
+
+test_a_drawer_turned_off_is_left_alone() {
+  held --no-clipboard >/dev/null
+  is "the clipboard is untouched" "$(clipboard)" '["a secret copied last week"]'
+  gone "$DESK/state/omarchy/clipboard-history.json.stream-held" "nothing was put aside"
+  tally release >/dev/null
+}
+
+# --- the bar -----------------------------------------------------------------
+
+test_widgets_come_off_and_go_back_where_they_were() {
+  layout '{"left":[{"id":"omarchy.clock"}],"right":[{"id":"omarchy.tailscale"},{"id":"jmad.tally"},{"id":"omarchy.volume"}]}'
+  local before
+  before=$(sections)
+
+  held --hide-widget omarchy.tailscale --hide-widget omarchy.clock >/dev/null
+  is "both come off the bar" "$(sections)" '{"left":[],"right":[{"id":"jmad.tally"},{"id":"omarchy.volume"}]}'
+
+  tally release >/dev/null
+  is "and go back in the order they were in" "$(sections)" "$before"
+}
+
+test_a_widget_named_with_an_instance_comes_off_too() {
+  layout '{"right":[{"id":"omarchy.tailscale#2"},{"id":"jmad.tally"}]}'
+  local before
+  before=$(sections)
+
+  held --hide-widget omarchy.tailscale >/dev/null
+  is "the instance is matched by its id" "$(sections)" '{"right":[{"id":"jmad.tally"}]}'
+
+  tally release >/dev/null
+  is "and comes back as it was" "$(sections)" "$before"
+}
+
+# --- where links go ----------------------------------------------------------
+
+test_links_are_routed_and_the_route_is_taken_away() {
+  held --browser chromium.desktop >/dev/null
+  has "the list names the browser" "$(cat "$(mimeapps)")" "x-scheme-handler/https=chromium.desktop"
+  has "and says who wrote it" "$(head -1 "$(mimeapps)")" "written by obs-tally-hold"
+
+  tally release >/dev/null
+  gone "$(mimeapps)" "the route is taken away"
+}
+
+test_a_browser_that_is_not_installed_leaves_links_alone() {
+  local said
+  said=$(held --browser nowhere.desktop 2>&1)
+  has "it says the entry is not there" "$said" "no desktop entry named nowhere.desktop"
+  gone "$(mimeapps)" "and writes no list"
+}
+
+test_somebody_elses_list_is_never_rewritten() {
+  printf '[Default Applications]\nx-scheme-handler/https=mine.desktop\n' >"$(mimeapps)"
+
+  held --browser chromium.desktop >/dev/null
+  has "the list is left as it was" "$(cat "$(mimeapps)")" "mine.desktop"
+
+  tally release >/dev/null
+  there "$(mimeapps)" "and is still there afterwards"
+  has "still theirs" "$(cat "$(mimeapps)")" "mine.desktop"
+}
+
+# --- names somebody could guess ----------------------------------------------
+
+test_a_link_at_the_state_file_is_not_followed() {
+  ln -s "$DESK/precious" "$DESK/run/obs-tally-hold"
+
+  held >/dev/null
+  intact
+  if [[ -L $DESK/run/obs-tally-hold ]]; then
+    note "the state file is a file of its own" "still a link" "a file"
+  fi
+  has "and holds what it changed" "$(cat "$DESK/run/obs-tally-hold")" "clipboard recents"
+  tally release >/dev/null
+}
+
+test_a_link_at_the_history_flag_is_not_followed() {
+  ln -s "$DESK/precious" "$DESK/run/obs-tally-history"
+
+  held >/dev/null
+  intact
+  is "the flag is empty, as a flag is" "$(cat "$DESK/run/obs-tally-history")" ""
+  tally release >/dev/null
+}
+
+test_a_link_at_the_mimeapps_list_is_not_followed() {
+  ln -s "$DESK/precious" "$(mimeapps)"
+
+  local said
+  said=$(held --browser chromium.desktop)
+  intact
+  is "and no route is claimed" "${said#holding: }" "clipboard recents notifications history "
+  tally release >/dev/null
+}
+
+test_a_link_at_the_widget_record_is_not_followed() {
+  local before
+  before=$(sections)
+  ln -s "$DESK/precious" "$DESK/cfg/omarchy/shell.json.stream-held"
+
+  held --hide-widget omarchy.tailscale >/dev/null
+  intact
+  is "the bar is left alone" "$(sections)" "$before"
+  tally release >/dev/null
+}
+
+test_a_link_at_a_drawer_record_is_not_followed() {
+  ln -s "$DESK/precious" "$DESK/state/omarchy/clipboard-history.json.stream-held"
+
+  local said
+  said=$(held 2>&1)
+  intact
+  is "the drawer is left open" "$(clipboard)" '["a secret copied last week"]'
+  has "and said out loud" "$said" "the clipboard history"
+  tally release >/dev/null
+}
+
+test_the_open_refuses_a_link_with_no_test_in_front_of_it() {
+  local rc
+  # The helper is called with nothing in front of it, which is the moment the
+  # report was about: whatever a test would have decided, the open decides.
+  # shellcheck disable=SC2016
+  rc=$(on_desk env TALLY_ROOT="$ROOT" bash -c '
+    source "$TALLY_ROOT/bin/obs-tally-hold" status >/dev/null
+    ln -s "$TALLY_DESK/precious" "$TALLY_DESK/somewhere"
+    echo written | write_fresh "$TALLY_DESK/somewhere"
+    echo "$?"
+  ')
+  is "the open itself refuses it" "$rc" "1"
+  intact
+}
+
+test_a_name_of_its_own_is_unlinked_rather_than_followed() {
+  local rc
+  # shellcheck disable=SC2016
+  rc=$(on_desk env TALLY_ROOT="$ROOT" bash -c '
+    source "$TALLY_ROOT/bin/obs-tally-hold" status >/dev/null
+    ln -s "$TALLY_DESK/precious" "$TALLY_DESK/ours"
+    echo written | write_ours "$TALLY_DESK/ours"
+    echo "$?"
+  ')
+  is "the write goes through" "$rc" "0"
+  intact
+  is "and lands on a file of its own" "$(cat "$DESK/ours")" "written"
+}
+
+test_a_link_swapped_in_over_and_over_is_never_followed() {
+  local planter i
+  (
+    for ((i = 0; i < 3000; i++)); do
+      ln -sfn "$DESK/precious" "$DESK/run/obs-tally-hold" 2>/dev/null
+      ln -sfn "$DESK/precious" "$DESK/run/obs-tally-history" 2>/dev/null
+    done
+  ) &
+  planter=$!
+
+  for ((i = 0; i < 12; i++)); do
+    held >/dev/null 2>&1
+    tally release >/dev/null 2>&1
+  done
+
+  kill "$planter" 2>/dev/null
+  wait "$planter" 2>/dev/null
+  intact "a name swapped under it is still never written through"
+}
+
+test_nothing_falls_back_to_a_shared_directory() {
+  local found
+  found=$(cd "$ROOT" && grep -rn ':-/tmp' bin shell hooks 2>/dev/null)
+  is "no script keeps state where anybody can reach it" "$found" ""
+}
+
+test_a_runtime_directory_that_is_not_ours_is_refused() {
+  local said
+  ln -s "$DESK/run" "$DESK/linked-run"
+
+  said=$(env PATH="$DESK/stub:$PATH" XDG_RUNTIME_DIR="$DESK/linked-run" "$ROOT/bin/obs-tally-hold" status 2>&1)
+  is "a linked runtime directory is refused" "$?" "1"
+  has "and says why" "$said" "no runtime directory of your own"
+
+  said=$(env PATH="$DESK/stub:$PATH" XDG_RUNTIME_DIR="$DESK/nowhere" "$ROOT/bin/obs-tally-hold" status 2>&1)
+  is "so is one that is not there" "$?" "1"
+}
+
+# --- what OBS is doing -------------------------------------------------------
+
+test_the_light_is_out_when_obs_is_closed() {
+  echo no >"$DESK/obs"
+  is "closed" "$(light)" "closed"
+}
+
+test_the_light_reads_the_banners() {
+  mkdir -p "$DESK/home/.config/obs-studio/logs"
+  printf 'a line\n==== Streaming Start ====\n' >"$DESK/home/.config/obs-studio/logs/session.txt"
+  is "a stream that started is live" "$(light)" "live"
+
+  printf '==== Streaming Start ====\n==== Streaming Stop ====\n' >"$DESK/home/.config/obs-studio/logs/session.txt"
+  is "a stream that stopped is idle" "$(light)" "idle"
+
+  printf 'nothing to say\n' >"$DESK/home/.config/obs-studio/logs/session.txt"
+  is "an OBS that never streamed is idle" "$(light)" "idle"
+}
+
+test_a_flatpak_obs_is_found_too() {
+  local flatpak="$DESK/home/.var/app/com.obsproject.Studio/config/obs-studio/logs"
+  mkdir -p "$DESK/home/.config/obs-studio/logs" "$flatpak"
+
+  printf '==== Streaming Stop ====\n' >"$DESK/home/.config/obs-studio/logs/old.txt"
+  sleep 0.02
+  printf '==== Streaming Start ====\n' >"$flatpak/new.txt"
+  is "the newer session wins" "$(light)" "live"
+
+  sleep 0.02
+  printf '==== Streaming Stop ====\n' >"$DESK/home/.config/obs-studio/logs/newer.txt"
+  is "and wins the other way round too" "$(light)" "idle"
+
+  is "OBS_LOG_DIR pins one directory" "$(on_desk env OBS_LOG_DIR="$flatpak" "$ROOT/bin/obs-tally-state")" "live"
+}
+
+test_a_pretended_word_beats_the_log() {
+  mkdir -p "$DESK/home/.config/obs-studio/logs"
+  printf '==== Streaming Stop ====\n' >"$DESK/home/.config/obs-studio/logs/session.txt"
+
+  pretend live >/dev/null
+  is "the word is the answer" "$(light)" "live"
+  has "and it says what it is pretending" "$(pretend)" "pretending OBS is live"
+
+  echo 'nonsense' >"$DESK/run/obs-tally-state"
+  is "a word that is not a state is ignored" "$(light)" "idle"
+
+  pretend off >/dev/null
+  is "and it can stop pretending" "$(light)" "idle"
+}
+
+test_pretending_refuses_a_link() {
+  ln -s "$DESK/precious" "$DESK/run/obs-tally-state"
+
+  local said
+  said=$(pretend live 2>&1)
+  intact
+  has "it writes its own file instead" "$said" "pretending OBS is live"
+  is "which is a file, not a link" "$(cat "$DESK/run/obs-tally-state")" "live"
+}
+
+# --- asking for it wrong -----------------------------------------------------
+
+test_a_flag_where_a_value_should_be_is_refused() {
+  local said
+  said=$(tally hold --browser --no-dnd 2>&1)
+  is "it stops rather than taking the flag as an answer" "$?" "1"
+  has "and says what it wanted" "$said" "--browser wants a desktop entry"
+  gone "$DESK/run/obs-tally-hold" "nothing is held"
+
+  said=$(tally hold --hide-widget 2>&1)
+  is "the same for a widget id" "$?" "1"
+  has "with its own sentence" "$said" "--hide-widget wants a widget id"
+}
+
+# --- somebody else's files stay theirs ---------------------------------------
+
+test_a_config_that_is_a_link_stays_a_link() {
+  mkdir -p "$DESK/dotfiles"
+  mv "$DESK/cfg/omarchy/shell.json" "$DESK/dotfiles/shell.json"
+  ln -s "$DESK/dotfiles/shell.json" "$DESK/cfg/omarchy/shell.json"
+
+  held --hide-widget omarchy.tailscale >/dev/null
+  if [[ ! -L $DESK/cfg/omarchy/shell.json ]]; then
+    note "the link into the dotfiles is still a link" "a regular file now" "still a link"
+  fi
+  is "and the checkout is what changed" \
+    "$(jq -c '.bar.layout' "$DESK/dotfiles/shell.json")" '{"right":[{"id":"jmad.tally"}]}'
+
+  tally release >/dev/null
+  if [[ ! -L $DESK/cfg/omarchy/shell.json ]]; then
+    note "it is a link afterwards too" "a regular file now" "still a link"
+  fi
+  is "with the widget back" \
+    "$(jq -c '.bar.layout' "$DESK/dotfiles/shell.json")" \
+    '{"right":[{"id":"omarchy.tailscale"},{"id":"jmad.tally"}]}'
+}
+
+test_two_rows_reading_the_same_thing_are_told_apart() {
+  local said
+  said=$(
+    source "$ROOT/bin/obs-tally-setup"
+    printf 'a.desktop\tFirefox\tfirefox\nb.desktop\tFirefox\tfirefox\nc.desktop\tChromium\tchromium\n' |
+      told_apart
+  )
+  is "the repeated name says which is which" "$said" \
+    "$(printf 'a.desktop\tFirefox (a.desktop)\tfirefox\nb.desktop\tFirefox (b.desktop)\tfirefox\nc.desktop\tChromium\tchromium')"
+}
+
+# --- the shape of the thing --------------------------------------------------
+
+test_every_script_parses_and_is_meant_to_be_run() {
+  local file
+  for file in "$ROOT"/bin/* "$ROOT"/hooks/*; do
+    [[ -x $file ]] || note "${file#"$ROOT/"} is executable" "not executable" "executable"
+    is "${file#"$ROOT/"} starts with a shebang" "$(head -c 2 "$file")" "#!"
+    bash -n "$file" 2>/dev/null || note "${file#"$ROOT/"} parses" "a syntax error" "bash -n clean"
+  done
+
+  bash -n "$ROOT/shell/tally-history.sh" 2>/dev/null ||
+    note "shell/tally-history.sh parses as bash" "a syntax error" "bash -n clean"
+  if command -v zsh >/dev/null; then
+    zsh -n "$ROOT/shell/tally-history.sh" 2>/dev/null ||
+      note "shell/tally-history.sh parses as zsh" "a syntax error" "zsh -n clean"
+  fi
+}
+
+# shellcheck disable=SC2016  # $PLUGIN is the pattern, not something to expand
+test_every_path_the_scripts_and_the_readme_name_is_there() {
+  local ref
+  while read -r ref; do
+    [[ -n $ref ]] || continue
+    there "$ROOT/${ref#\$PLUGIN/}" "the scripts name $ref and it is there"
+  done < <(grep -ho '\$PLUGIN/[A-Za-z0-9_./-]*' "$ROOT"/bin/* | sort -u)
+
+  while read -r ref; do
+    [[ -n $ref ]] || continue
+    there "$ROOT/${ref#jmad.tally/}" "the README names $ref and it is there"
+  done < <(grep -ho 'jmad\.tally/\(bin\|hooks\|shell\)/[A-Za-z0-9_.-]*' "$ROOT/README.md" | sort -u)
+}
+
+test_the_manifest_says_what_the_plugin_is() {
+  local file key
+  jq -e . "$ROOT/manifest.json" >/dev/null 2>&1 ||
+    note "the manifest is JSON" "it is not" "valid JSON"
+
+  is "the version reads as a version" \
+    "$(jq -r '.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")' "$ROOT/manifest.json")" "true"
+
+  while read -r file; do
+    there "$ROOT/$file" "the entry point $file is there"
+  done < <(jq -r '.entryPoints[]' "$ROOT/manifest.json")
+
+  while read -r key; do
+    is "the settable $key has a default" \
+      "$(jq -r --arg k "$key" '.barWidget.defaults | has($k)' "$ROOT/manifest.json")" "true"
+  done < <(jq -r '.barWidget.schema[].key' "$ROOT/manifest.json")
+
+  local id
+  id=$(jq -r .id "$ROOT/manifest.json")
+  for file in Service.qml TallyWidget.qml bin/obs-tally-setup hooks/jmad-tally-release; do
+    grep -qF "$id" "$ROOT/$file" ||
+      note "$file knows the plugin is called $id" "it does not" "the id spelled out"
+  done
+}
+
+test_the_qml_parses() {
+  command -v qmlformat >/dev/null || return 0
+
+  local file
+  for file in "$ROOT"/*.qml; do
+    qmlformat -n "$file" >/dev/null 2>&1 ||
+      note "${file#"$ROOT/"} parses" "a syntax error" "qmlformat clean"
+  done
+}
+
+test_shellcheck_is_quiet() {
+  # A shim that resolves to nothing counts as not having it.
+  shellcheck --version >/dev/null 2>&1 || return 0
+
+  local said
+  said=$(cd "$ROOT" && shellcheck bin/* hooks/* shell/tally-history.sh test/run 2>&1)
+  is "shellcheck has nothing to say" "$said" ""
+}
+
+# --- running them ------------------------------------------------------------
+
+passed=0
+failed=0
+skipped=0
+
+# Read on a descriptor of its own, so a test that reads standard input does not
+# eat the list of tests still to run.
+while read -r name <&3; do
+  if [[ -n $FILTER && $name != *"$FILTER"* ]]; then
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  printf '  %s\n' "${name#test_}" | tr '_' ' '
+
+  if (
+    desk
+    trap 'rm -rf "$DESK"' EXIT
+    "$name"
+    [[ -e $DESK/failed ]] && exit 1
+    exit 0
+  ); then
+    passed=$((passed + 1))
+  else
+    failed=$((failed + 1))
+  fi
+done 3< <(grep -o '^test_[a-z0-9_]*' "${BASH_SOURCE[0]}")
+
+echo
+if ((failed)); then
+  printf '%d passed, %d failed\n' "$passed" "$failed"
+  exit 1
+fi
+
+printf '%d passed%s\n' "$passed" "$( ((skipped)) && printf ', %d not asked for' "$skipped")"

@@ -17,18 +17,6 @@ PROFILE="${XDG_DATA_HOME:-$HOME/.local/share}/stream-browser"
 ENTRY="stream-browser.desktop"
 PLUGIN="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for tool in gum jq; do
-  command -v "$tool" >/dev/null || {
-    echo "$tool is needed and is not here" >&2
-    exit 1
-  }
-done
-
-[[ -f $CONFIG ]] || {
-  echo "no shell.json at $CONFIG" >&2
-  exit 1
-}
-
 # The plugin's settings sit on its own entry, whether that entry is the bar
 # widget's or a line in plugins[], so both are looked through and the first one
 # found is the one written to.
@@ -50,16 +38,38 @@ read_setting() {
   ' "$CONFIG"
 }
 
+# The file may be a link into a dotfiles checkout, so the rename lands on what
+# the link points at rather than leaving a regular file where the link was.
+config_file() {
+  local target="$CONFIG"
+
+  if [[ -L $CONFIG ]]; then
+    target=$(readlink -f -- "$CONFIG") || return 1
+    [[ -f $target ]] || return 1
+  fi
+
+  printf '%s' "$target"
+}
+
 write_setting() {
-  local path="$1" key="$2" value="$3" tmp
+  local path="$1" key="$2" value="$3" tmp config
   tmp=$(mktemp) || return 1
+  config=$(config_file) || {
+    rm -f -- "$tmp"
+    return 1
+  }
   # Written back in the order the rest of the file is in, so a setting added
   # here reads the same as one typed in by hand.
-  jq --argjson p "[\"${path//,/\",\"}\"]" --arg k "$key" --argjson v "$value" '
+  if jq --argjson p "[\"${path//,/\",\"}\"]" --arg k "$key" --argjson v "$value" '
     ($p | map(if test("^[0-9]+$") then tonumber else . end)) as $at
     | setpath($at + [$k]; $v)
     | setpath($at; getpath($at) | to_entries | sort_by(.key) | from_entries)
-  ' "$CONFIG" >"$tmp" && mv -- "$tmp" "$CONFIG" || rm -f -- "$tmp"
+  ' "$CONFIG" >"$tmp"; then
+    mv -- "$tmp" "$config"
+  else
+    rm -f -- "$tmp"
+    return 1
+  fi
 }
 
 # Anything that has told the desktop it can open an https link. That is a
@@ -83,6 +93,22 @@ browsers() {
       printf '%s\t%s\t%s\n' "$id" "${name:-$id}" "${exec##*/}"
     done
   done
+}
+
+# gum hands back the line that was chosen, so two rows reading the same thing
+# would be one row as far as the answer is concerned. A name that repeats says
+# which id it stands for, and every other field is left as it was.
+told_apart() {
+  awk -F'\t' -v OFS='\t' '
+    { line[NR] = $0; name[NR] = $2; seen[$2]++ }
+    END {
+      for (i = 1; i <= NR; i++) {
+        $0 = line[i]
+        if (seen[name[i]] > 1) $2 = $2 " (" $1 ")"
+        print
+      }
+    }
+  '
 }
 
 # What a browser wants in order to keep its own history somewhere else. The
@@ -137,7 +163,7 @@ ask_browser() {
     labels+=("$name")
     ids+=("$id")
     binaries+=("$binary")
-  done < <(browsers | sort -t$'\t' -k2)
+  done < <(browsers | told_apart | sort -t$'\t' -k2)
 
   choice=$(printf '%s\n' "${labels[@]}" |
     gum choose --header="Links opened while the stream is live go to:") || return 0
@@ -205,7 +231,7 @@ ask_widgets() {
     labels+=("$name")
     ids+=("$id")
     [[ " $current " == *" $id "* ]] && selected+=("$name")
-  done < <(bar_widgets)
+  done < <(bar_widgets | told_apart)
 
   ((${#labels[@]})) || return 0
 
@@ -241,7 +267,20 @@ ask_hook() {
 }
 
 main() {
-  local path
+  local path tool
+
+  for tool in gum jq; do
+    command -v "$tool" >/dev/null || {
+      echo "$tool is needed and is not here" >&2
+      exit 1
+    }
+  done
+
+  [[ -f $CONFIG ]] || {
+    echo "no shell.json at $CONFIG" >&2
+    exit 1
+  }
+
   path=$(entry_path)
   [[ -n $path ]] || {
     echo "jmad.tally is not in $CONFIG. Enable the plugin first." >&2
@@ -267,4 +306,4 @@ main() {
   echo "  $PLUGIN/bin/obs-tally-simulate off"
 }
 
-main "$@"
+[[ ${BASH_SOURCE[0]} == "$0" ]] && main "$@"

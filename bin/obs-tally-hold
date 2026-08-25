@@ -157,6 +157,20 @@ unroute_links() {
   done < <(browser_lists)
 }
 
+# shell.json is somebody's own file and is often a link into a dotfiles
+# checkout, so the rename lands on what the link points at rather than replacing
+# the link with a file. A link pointing at nothing is not written at all.
+config_file() {
+  local target="$SHELL_CONFIG"
+
+  if [[ -L $SHELL_CONFIG ]]; then
+    target=$(readlink -f -- "$SHELL_CONFIG") || return 1
+    [[ -f $target ]] || return 1
+  fi
+
+  printf '%s' "$target"
+}
+
 # A bar widget that names your machines out loud is a leak with a mouse on it.
 # The entry is lifted out of the layout and kept beside shell.json with the
 # section and the place in it, so the bar comes back in the order it was in
@@ -190,12 +204,18 @@ hide_widgets() {
     return 1
   }
 
+  local config
+  config=$(config_file) || {
+    rm -f -- "$tmp"
+    return 1
+  }
+
   printf '%s\n' "$held" | write_fresh "$SHELL_CONFIG$ASIDE" || {
     rm -f -- "$tmp"
     return 1
   }
 
-  mv -- "$tmp" "$SHELL_CONFIG"
+  mv -- "$tmp" "$config"
 }
 
 show_widgets() {
@@ -214,10 +234,18 @@ show_widgets() {
         (.bar.layout[$it.section] // [])[0:$it.index]
         + [$it.entry]
         + (.bar.layout[$it.section] // [])[$it.index:]))
-  ' "$SHELL_CONFIG" >"$tmp" && mv -- "$tmp" "$SHELL_CONFIG" && rm -f -- "$SHELL_CONFIG$ASIDE" || {
+  ' "$SHELL_CONFIG" >"$tmp" || {
     rm -f -- "$tmp"
     return 1
   }
+
+  local config
+  if ! config=$(config_file) || ! mv -- "$tmp" "$config"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+
+  rm -f -- "$SHELL_CONFIG$ASIDE"
 }
 
 put_away() {
@@ -282,11 +310,19 @@ hold() {
   while (($#)); do
     case "$1" in
     --browser)
-      browser="${2-}"
+      [[ -n ${2-} && ${2-} != --* ]] || {
+        echo "--browser wants a desktop entry, such as chromium.desktop" >&2
+        exit 1
+      }
+      browser="$2"
       shift
       ;;
     --hide-widget)
-      [[ -n ${2-} ]] && widgets+=("$2")
+      [[ -n ${2-} && ${2-} != --* ]] || {
+        echo "--hide-widget wants a widget id, such as omarchy.tailscale" >&2
+        exit 1
+      }
+      widgets+=("$2")
       shift
       ;;
     --no-dnd) want_dnd=0 ;;
