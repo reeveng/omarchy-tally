@@ -4,7 +4,7 @@
   "name": "Tally",
   "version": "1.2.0",
   "author": "jmad",
-  "description": "A tally light for OBS, and a desk that puts itself away for the length of the stream",
+  "description": "A record dot that lights the moment OBS goes live, and a desk that puts its notifications, clipboard and history away until it ends",
   "kinds": [
     "bar-widget",
     "service"
