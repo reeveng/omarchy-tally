@@ -58,15 +58,34 @@ ASIDE=".stream-held"
 
 MARKER="# written by obs-tally-hold, deleted when the stream ends"
 
-# A redirection follows a symlink and writes to whatever is on the far end of
-# it. Every name this script writes is one somebody could guess and leave a
-# link at first, so a link found at one of them is refused rather than
-# followed. Nothing here is ever meant to be a link.
-no_link() {
-  [[ -L $1 ]] || return 0
+# An ordinary redirection follows a symlink and writes to whatever is on the far
+# end of it, and a test beforehand only narrows the moment somebody has to swap
+# the name in. noclobber makes the redirection an O_CREAT|O_EXCL open instead,
+# which fails on anything already at the name, a symlink included and a dangling
+# one too, so the rule is kept by the open itself.
+#
+# This one is for a name somebody else may own: an existing file, of any kind,
+# means leave it alone.
+write_fresh() {
+  local path="$1"
 
-  echo "refusing to write through the symlink at $1" >&2
-  return 1
+  (
+    set -C
+    cat >"$path"
+  ) 2>/dev/null
+}
+
+# This one is for the names this script owns, where anything sitting at the name
+# is stale or planted. It is unlinked first, which takes away a symlink rather
+# than following it, and the open still refuses whatever appeared in between.
+write_ours() {
+  local path="$1"
+
+  rm -f -- "$path" 2>/dev/null
+  write_fresh "$path" || {
+    echo "could not write $path without following what is at it" >&2
+    return 1
+  }
 }
 
 # The read is not quiet: -q suppresses the answer as well as the error, which
@@ -112,18 +131,20 @@ route_links() {
   }
 
   while read -r list; do
-    # Somebody's own file, which this has no business rewriting. A link
-    # counts even when it points at nothing, since writing would follow it.
+    # Somebody's own file, which this has no business rewriting. The open
+    # settles it either way; this is only how the ordinary case stays quiet.
     [[ -e $list || -L $list ]] && continue
 
-    cat >"$list" <<EOF
+    if write_fresh "$list" <<EOF
 $MARKER
 [Default Applications]
 text/html=$id
 x-scheme-handler/http=$id
 x-scheme-handler/https=$id
 EOF
-    wrote=1
+    then
+      wrote=1
+    fi
   done < <(browser_lists)
 
   ((wrote))
@@ -169,7 +190,11 @@ hide_widgets() {
     return 1
   }
 
-  printf '%s\n' "$held" >"$SHELL_CONFIG$ASIDE"
+  printf '%s\n' "$held" | write_fresh "$SHELL_CONFIG$ASIDE" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+
   mv -- "$tmp" "$SHELL_CONFIG"
 }
 
@@ -206,7 +231,7 @@ put_away() {
   if [[ -d $path$ASIDE ]]; then
     mkdir -p -- "$path"
   elif [[ -n $placeholder ]]; then
-    printf '%s\n' "$placeholder" >"$path"
+    printf '%s\n' "$placeholder" | write_fresh "$path"
   fi
 }
 
@@ -278,13 +303,7 @@ hold() {
     shift
   done
 
-  # Before the state file is read as a hold already standing, and before a
-  # single switch is thrown: a hold that cannot write down what it changed is a
-  # hold nothing will undo.
-  no_link "$STATE" || exit 1
-  ((want_history)) && { no_link "$HISTORY_FLAG" || exit 1; }
-
-  [[ -f $STATE ]] && exit 0
+  [[ -f $STATE && ! -L $STATE ]] && exit 0
 
   if ((want_dnd)) && ! dnd_is_on; then
     omarchy-shell -q notifications setDnd true >/dev/null 2>&1 && changed+="dnd "
@@ -298,10 +317,10 @@ hold() {
   ((want_clipboard)) && hold_away "the clipboard history" "$CLIPBOARD" "[]" && changed+="clipboard "
   ((want_recents)) && hold_away "the recent files" "$RECENTS" && changed+="recents "
   ((want_notifications)) && hold_away "the notification backlog" "$NOTIFICATIONS" && changed+="notifications "
-  ((want_history)) && : >"$HISTORY_FLAG" && changed+="history "
+  ((want_history)) && write_ours "$HISTORY_FLAG" </dev/null && changed+="history "
   ((${#widgets[@]})) && hide_widgets "${widgets[@]}" && changed+="widgets "
 
-  printf '%s\n' "$changed" >"$STATE"
+  printf '%s\n' "$changed" | write_ours "$STATE"
   say_missing
   echo "holding: ${changed:-nothing}"
 }

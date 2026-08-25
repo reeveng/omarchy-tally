@@ -29,11 +29,16 @@ FILE="$RUN_DIR/obs-tally-state"
 
 case "${1:-status}" in
 live | idle | closed)
-  if [[ -L $FILE ]]; then
-    echo "refusing to write through the symlink at $FILE" >&2
+  # Unlinked rather than followed, then written with noclobber, so the open is
+  # O_CREAT|O_EXCL and refuses anything that appeared at the name in between.
+  rm -f -- "$FILE" 2>/dev/null
+  if ! (
+    set -C
+    echo "$1" >"$FILE"
+  ); then
+    echo "could not write $FILE without following what is at it" >&2
     exit 1
   fi
-  echo "$1" >"$FILE"
   echo "pretending OBS is $1"
   ;;
 off | none | clear)

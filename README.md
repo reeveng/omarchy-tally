@@ -222,8 +222,9 @@ installed somewhere neither of the two read by default. `obs-tally-hold` keeps
 what it changed in `$XDG_RUNTIME_DIR`, so a second `hold` while one is running
 does nothing and a reboot forgets it. Without a runtime directory of its own it
 refuses to hold rather than keep that somewhere shared, and it writes through
-no symlink: a link left at one of the names it owns is refused and said out
-loud. What it puts away it puts beside itself under `.stream-held`, which a
+no symlink: every write is a create-or-fail open, so a link left at one of the
+names it owns is refused by the open itself rather than by a test in front of
+it. What it puts away it puts beside itself under `.stream-held`, which a
 `release` finds whether or not that file survived.
 
 ## The service without the light
