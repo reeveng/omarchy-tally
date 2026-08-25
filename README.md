@@ -152,7 +152,9 @@ and the stream key in OBS's own settings pane. Those are yours to keep shut.
 
 OBS writes `==== Streaming Start ====` and `==== Streaming Stop ====` into the
 log of the session it is running. Whichever came last is the answer, and
-`pgrep` settles whether OBS is there at all.
+`pgrep` settles whether OBS is there at all. A flatpak OBS keeps its logs
+inside its own config rather than in `~/.config`, so both places are read and
+the newest log of the two is the session that is running.
 
 So there is nothing to install inside OBS, no websocket to enable, no port
 listening and no password anywhere. The cost of that is what a log can tell
@@ -215,13 +217,14 @@ cd ~/.config/omarchy/plugins/jmad.tally/bin
 ./obs-tally-hold status
 ```
 
-`OBS_LOG_DIR` moves the directory the logs are read from. `obs-tally-hold`
-keeps what it changed in `$XDG_RUNTIME_DIR`, so a second `hold` while one is
-running does nothing and a reboot forgets it. Without a runtime directory of
-its own it refuses to hold rather than keep that somewhere shared, and it
-writes through no symlink: a link left at one of the names it owns is refused
-and said out loud. What it puts away it puts beside itself under
-`.stream-held`, which a `release` finds whether or not that file survived.
+`OBS_LOG_DIR` names the one directory the logs are read from, for an OBS
+installed somewhere neither of the two read by default. `obs-tally-hold` keeps
+what it changed in `$XDG_RUNTIME_DIR`, so a second `hold` while one is running
+does nothing and a reboot forgets it. Without a runtime directory of its own it
+refuses to hold rather than keep that somewhere shared, and it writes through
+no symlink: a link left at one of the names it owns is refused and said out
+loud. What it puts away it puts beside itself under `.stream-held`, which a
+`release` finds whether or not that file survived.
 
 ## The service without the light
 

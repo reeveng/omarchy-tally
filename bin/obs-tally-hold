@@ -278,12 +278,13 @@ hold() {
     shift
   done
 
-  [[ -f $STATE ]] && exit 0
-
-  # Before a single switch is thrown, since a hold that cannot write down what
-  # it changed is a hold nothing will undo.
+  # Before the state file is read as a hold already standing, and before a
+  # single switch is thrown: a hold that cannot write down what it changed is a
+  # hold nothing will undo.
   no_link "$STATE" || exit 1
   ((want_history)) && { no_link "$HISTORY_FLAG" || exit 1; }
+
+  [[ -f $STATE ]] && exit 0
 
   if ((want_dnd)) && ! dnd_is_on; then
     omarchy-shell -q notifications setDnd true >/dev/null 2>&1 && changed+="dnd "
@@ -308,7 +309,7 @@ hold() {
 release() {
   local changed=""
 
-  if [[ -f $STATE ]]; then
+  if [[ -f $STATE && ! -L $STATE ]]; then
     read -r changed <"$STATE"
     rm -f "$STATE"
   fi
@@ -332,7 +333,7 @@ release() {
 status() {
   local changed
 
-  if [[ -f $STATE ]]; then
+  if [[ -f $STATE && ! -L $STATE ]]; then
     read -r changed <"$STATE"
     echo "holding: ${changed:-nothing}"
   else

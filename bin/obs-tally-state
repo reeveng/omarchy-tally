@@ -7,7 +7,9 @@
 # answer. Nothing here talks to the websocket, which means no plugin to install
 # in OBS, no port to open and no password to keep.
 #
-# OBS_LOG_DIR moves the directory the logs are read from.
+# OBS_LOG_DIR moves the directory the logs are read from. Without it both the
+# ordinary directory and the one a flatpak OBS keeps inside its own config are
+# read, and the newest log of the two is the session that is running.
 #
 # A word in $XDG_RUNTIME_DIR/obs-tally-state is taken over anything OBS says,
 # which is how obs-tally-simulate shows the light in all three states without
@@ -15,10 +17,13 @@
 
 set -uo pipefail
 
-SIMULATED="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-state"
-LOGS="${OBS_LOG_DIR:-$HOME/.config/obs-studio/logs}"
+SIMULATED="${XDG_RUNTIME_DIR:-/run/user/$UID}/obs-tally-state"
 
-if [[ -f $SIMULATED ]]; then
+LOG_DIRS=("${OBS_LOG_DIR:-$HOME/.config/obs-studio/logs}")
+[[ -n ${OBS_LOG_DIR:-} ]] ||
+  LOG_DIRS+=("$HOME/.var/app/com.obsproject.Studio/config/obs-studio/logs")
+
+if [[ -f $SIMULATED && ! -L $SIMULATED ]]; then
   read -r word <"$SIMULATED"
   case "$word" in
   live | idle | closed)
@@ -33,8 +38,18 @@ if ! pgrep -x obs >/dev/null; then
   exit 0
 fi
 
-log=$(ls -t "$LOGS"/*.txt 2>/dev/null | head -1)
-last=$(grep -h '==== Streaming \(Start\|Stop\)' "$log" 2>/dev/null | tail -1)
+logs=()
+for dir in "${LOG_DIRS[@]}"; do
+  for file in "$dir"/*.txt; do
+    [[ -f $file ]] && logs+=("$file")
+  done
+done
+
+last=""
+if ((${#logs[@]})); then
+  log=$(ls -t -- "${logs[@]}" | head -1)
+  last=$(grep -h '==== Streaming \(Start\|Stop\)' "$log" 2>/dev/null | tail -1)
+fi
 
 if [[ $last == *"Streaming Start"* ]]; then
   echo live

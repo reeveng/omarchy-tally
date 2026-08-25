@@ -16,10 +16,23 @@
 
 set -euo pipefail
 
-FILE="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-state"
+# The same rule obs-tally-hold keeps: a name anybody could guess is written in
+# this user's own runtime directory and nowhere shared, and never through a
+# symlink somebody left at it.
+RUN_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}"
+if [[ ! -d $RUN_DIR || -L $RUN_DIR || ! -O $RUN_DIR ]]; then
+  echo "no runtime directory of your own at $RUN_DIR, so there is nowhere private to keep this" >&2
+  exit 1
+fi
+
+FILE="$RUN_DIR/obs-tally-state"
 
 case "${1:-status}" in
 live | idle | closed)
+  if [[ -L $FILE ]]; then
+    echo "refusing to write through the symlink at $FILE" >&2
+    exit 1
+  fi
   echo "$1" >"$FILE"
   echo "pretending OBS is $1"
   ;;
@@ -28,7 +41,7 @@ off | none | clear)
   echo "pretending nothing; OBS answers for itself"
   ;;
 status)
-  if [[ -f $FILE ]]; then
+  if [[ -f $FILE && ! -L $FILE ]]; then
     echo "pretending OBS is $(cat "$FILE")"
   else
     echo "pretending nothing"

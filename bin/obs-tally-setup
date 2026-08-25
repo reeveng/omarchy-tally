@@ -236,8 +236,7 @@ ask_hook() {
 
   gum confirm "A machine that loses power mid-stream keeps holding your history. Give it back on the next boot?" || return 0
 
-  mkdir -p -- "$hooks"
-  install -m 755 "$PLUGIN/hooks/post-boot" "$hooks/jmad-tally-release" &&
+  omarchy-hook-install post-boot "$PLUGIN/hooks/jmad-tally-release" >/dev/null &&
     echo "Installed the post-boot hook."
 }
 
