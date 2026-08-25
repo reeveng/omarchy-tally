@@ -8,8 +8,10 @@
 #   source ~/.config/omarchy/plugins/jmad.tally/shell/tally-history.sh
 #
 # The stream is a file existing, written by obs-tally-hold and deleted when the
-# light goes out. Reading it is a test on every prompt and nothing more, which
-# is the reason it is a file and not a question asked of OBS.
+# light goes out. It is looked for in this user's own runtime directory and
+# nowhere else, which is also the only place this shell's history is moved to.
+# Reading it is a test on every prompt and nothing more, which is the reason it
+# is a file and not a question asked of OBS.
 #
 # What is typed while live is forgotten with the stream. A shell that was
 # already open when it started keeps everything it had, waiting.
@@ -20,7 +22,7 @@ if [ -n "${ZSH_VERSION-}" ]; then
   # named, the empty one is never written anywhere. fc -P pops it and the old
   # history is back, in memory, unread from disk and unchanged on it.
   _tally_history_precmd() {
-    if [[ -e ${XDG_RUNTIME_DIR:-/tmp}/obs-tally-history ]]; then
+    if [[ -e ${XDG_RUNTIME_DIR:-/run/user/$UID}/obs-tally-history ]]; then
       (( ${_tally_history_held:-0} )) && return
       fc -p && _tally_history_held=1
     elif (( ${_tally_history_held:-0} )); then
@@ -37,12 +39,12 @@ elif [ -n "${BASH_VERSION-}" ]; then
   # Bash has no stack, so the history is written out, dropped, and read back at
   # the end. HISTFILE moves somewhere a reboot forgets while the stream lasts.
   _tally_history_prompt() {
-    if [ -e "${XDG_RUNTIME_DIR:-/tmp}/obs-tally-history" ]; then
+    if [ -e "${XDG_RUNTIME_DIR:-/run/user/$UID}/obs-tally-history" ]; then
       [ -n "${_TALLY_HISTORY_HELD-}" ] && return
       _TALLY_HISTORY_FILE=$HISTFILE
       history -a
       history -c
-      HISTFILE="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-shell-history"
+      HISTFILE="${XDG_RUNTIME_DIR:-/run/user/$UID}/obs-tally-shell-history"
       _TALLY_HISTORY_HELD=1
     elif [ -n "${_TALLY_HISTORY_HELD-}" ]; then
       history -c

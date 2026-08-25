@@ -27,7 +27,17 @@
 
 set -uo pipefail
 
-STATE="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-hold"
+# The state and the history flag are predictable names, so they go somewhere
+# only this user can open. There is no falling back to a shared directory: a
+# desk with no runtime directory of its own is not a desk being streamed from,
+# and /tmp is a place anybody with an account can leave a symlink lying.
+RUN_DIR="${XDG_RUNTIME_DIR:-/run/user/$UID}"
+[[ -d $RUN_DIR && ! -L $RUN_DIR && -O $RUN_DIR ]] || {
+  echo "no runtime directory of your own at $RUN_DIR, so there is nowhere private to keep this" >&2
+  exit 1
+}
+
+STATE="$RUN_DIR/obs-tally-hold"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -40,13 +50,24 @@ SHELL_CONFIG="$CONFIG_DIR/omarchy/shell.json"
 
 # A shell cannot be reached into from out here, so it is told instead. The file
 # is the whole message, and shell/tally-history.sh is what reads it.
-HISTORY_FLAG="${XDG_RUNTIME_DIR:-/tmp}/obs-tally-history"
+HISTORY_FLAG="$RUN_DIR/obs-tally-history"
 
 # What is put away is moved to this name beside itself, so the moved copy is
 # its own record and a release finds it whether or not the state file lived.
 ASIDE=".stream-held"
 
 MARKER="# written by obs-tally-hold, deleted when the stream ends"
+
+# A redirection follows a symlink and writes to whatever is on the far end of
+# it. Every name this script writes is one somebody could guess and leave a
+# link at first, so a link found at one of them is refused rather than
+# followed. Nothing here is ever meant to be a link.
+no_link() {
+  [[ -L $1 ]] || return 0
+
+  echo "refusing to write through the symlink at $1" >&2
+  return 1
+}
 
 # The read is not quiet: -q suppresses the answer as well as the error, which
 # is a reading of "off" for a desk that is already silent.
@@ -91,8 +112,9 @@ route_links() {
   }
 
   while read -r list; do
-    # Somebody's own file, which this has no business rewriting.
-    [[ -e $list ]] && continue
+    # Somebody's own file, which this has no business rewriting. A link
+    # counts even when it points at nothing, since writing would follow it.
+    [[ -e $list || -L $list ]] && continue
 
     cat >"$list" <<EOF
 $MARKER
@@ -123,7 +145,7 @@ hide_widgets() {
 
   ((${#ids[@]})) || return 1
   command -v jq >/dev/null || return 1
-  [[ -f $SHELL_CONFIG && ! -e $SHELL_CONFIG$ASIDE ]] || return 1
+  [[ -f $SHELL_CONFIG && ! -e $SHELL_CONFIG$ASIDE && ! -L $SHELL_CONFIG$ASIDE ]] || return 1
 
   list=$(printf '%s\n' "${ids[@]}" | jq -R . | jq -sc .) || return 1
 
@@ -154,7 +176,7 @@ hide_widgets() {
 show_widgets() {
   local tmp
 
-  [[ -f $SHELL_CONFIG$ASIDE ]] || return 1
+  [[ -f $SHELL_CONFIG$ASIDE && ! -L $SHELL_CONFIG$ASIDE ]] || return 1
   command -v jq >/dev/null || return 1
 
   tmp=$(mktemp) || return 1
@@ -177,7 +199,7 @@ put_away() {
   local path="$1" placeholder="${2-}"
 
   [[ -n $path && -e $path ]] || return 1
-  [[ -e $path$ASIDE ]] && return 1
+  [[ -e $path$ASIDE || -L $path$ASIDE ]] && return 1
 
   mv -- "$path" "$path$ASIDE" || return 1
 
@@ -257,6 +279,11 @@ hold() {
   done
 
   [[ -f $STATE ]] && exit 0
+
+  # Before a single switch is thrown, since a hold that cannot write down what
+  # it changed is a hold nothing will undo.
+  no_link "$STATE" || exit 1
+  ((want_history)) && { no_link "$HISTORY_FLAG" || exit 1; }
 
   if ((want_dnd)) && ! dnd_is_on; then
     omarchy-shell -q notifications setDnd true >/dev/null 2>&1 && changed+="dnd "
